@@ -1,0 +1,14 @@
+License
+
+Unless otherwise specified, all files included in this distribution are under
+
+    Apache License 2.0
+    http://www.apache.org/licenses/LICENSE-2.0.html
+
+Exceptions:
+
+    _HoehrmannUtf8Decoder.java
+
+        This is derived from Bjoern Hoehrmann's UTF-8 decoder, see license detail at
+        http://bjoern.hoehrmann.de/utf-8/decoder/dfa/
+
