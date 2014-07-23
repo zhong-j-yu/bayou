@@ -1,5 +1,7 @@
-# Bayou Framework
+## Bayou Framework
 
-See <http://bayou.io>
+Async http server for Java 8.
+
+For more information, visit <http://bayou.io>
 
 

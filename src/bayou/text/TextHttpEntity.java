@@ -5,15 +5,11 @@ import bayou.bytes.ByteSource;
 import bayou.bytes.SimpleByteSource;
 import bayou.http.HttpEntity;
 import bayou.mime.ContentType;
-import bayou.util.End;
 
 import java.nio.ByteBuffer;
-import java.nio.charset.Charset;
-import java.nio.charset.CharsetEncoder;
-import java.nio.charset.CodingErrorAction;
-import java.nio.charset.StandardCharsets;
+import java.nio.CharBuffer;
+import java.nio.charset.*;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -43,7 +39,7 @@ public class TextHttpEntity implements HttpEntity
     final Charset charset;
     final Instant lastModified;
 
-    final ArrayList<ByteBuffer> bufList; // result from eager encoding
+    final ByteBuffer bb; // result from eager encoding
     final Long byteCount;
 
     final List<CharSequence> charSrc; // for lazy encoding
@@ -76,13 +72,13 @@ public class TextHttpEntity implements HttpEntity
         if(saver.charCount<=EAGER_CHAR_MAX) // do eager
         {
             charSrc = null;
-            bufList = new ArrayList<>();
-            byteCount = doEagerEncoding(saver, charset, bufList);
+            bb = doEagerEncoding(saver, charset);
+            byteCount = new Long(bb.remaining());
         }
         else // do lazy
         {
             charSrc = saver;
-            bufList = null;
+            bb = null;
             byteCount = null;
         }
     }
@@ -167,8 +163,8 @@ public class TextHttpEntity implements HttpEntity
     public ByteSource body()
     {
         // entity can be shared. getBody() can be called multiple times.
-        if(bufList!=null)
-            return new SimpleByteSource(bufList.stream()); // SimpleByteSource will not modify buffers
+        if(bb!=null)
+            return new SimpleByteSource(bb); // SimpleByteSource will not modify bb
         else
             return new TextByteSource(BUF_SIZE, newEncoder(charset), charSrc.stream());
         // we need to keep charSrc since this is a shared entity.
@@ -216,27 +212,18 @@ public class TextHttpEntity implements HttpEntity
         return lastModified;
     }
 
-    static long doEagerEncoding(List<CharSequence> list, Charset charset, ArrayList<ByteBuffer> outList)
+    static ByteBuffer doEagerEncoding(_CharSeqSaver saver, Charset charset)
     {
-        TextByteSource src = new TextByteSource(BUF_SIZE, newEncoder(charset), list.stream());
-        long byteCount=0;
+        // performance of this method is significant in a simple hello-world benchmark test
+        char[] chars = saver.toCharArray();
+        CharBuffer cb = CharBuffer.wrap(chars);
+        CharsetEncoder encoder = newEncoder(charset);
         try
         {
-            while(true)
-            {
-                ByteBuffer bb = src.read0();  // throws End if no more
-                outList.add(bb);
-                byteCount+=bb.remaining();
-            }
+            return encoder.encode(cb);
         }
-        catch (End end)
+        catch (CharacterCodingException e) // won't happen
         {
-            src.close();
-            return byteCount;
-        }
-        catch (Exception e) // uh? should not occur
-        {
-            src.close();
             throw new RuntimeException(e);
         }
     }
