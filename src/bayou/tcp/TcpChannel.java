@@ -70,6 +70,10 @@ public interface TcpChannel
      *     </li>
      * </ul>
      */
+//     * <p>
+//     *     The parameter <code>`accepting`</code> has no meaning if this channel is from
+//     *     a client; the <code>false</code> value is recommended in that case.
+//     * </p>
     Async<Void> awaitReadable(boolean accepting);
     // probably no spurious wakeup - if readable, next read() should return something.
     //    it's better for app to prepare for the possibility of spurious wakeup

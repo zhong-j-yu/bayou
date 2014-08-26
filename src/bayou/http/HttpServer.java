@@ -204,7 +204,7 @@ public class HttpServer
     /**
      * Pausing accepting new requests. See <a href="#life-cycle">Life Cycle</a>.
      */
-    public void pauseAccepting() throws Exception
+    public void pauseAccepting()
     {
         tcpServer.pauseAccepting();
     }
@@ -212,7 +212,7 @@ public class HttpServer
     /**
      * Resume accepting new requests. See <a href="#life-cycle">Life Cycle</a>.
      */
-    public void resumeAccepting() throws Exception
+    public void resumeAccepting()
     {
         tcpServer.resumeAccepting();
     }
@@ -220,7 +220,7 @@ public class HttpServer
     /**
      * Stop accepting new requests. See <a href="#life-cycle">Life Cycle</a>.
      */
-    public void stopAccepting() throws Exception
+    public void stopAccepting()
     {
         tcpServer.stopAccepting();
         // message?
@@ -229,7 +229,7 @@ public class HttpServer
     /**
      * Stop accepting new requests and abort outstanding requests. See <a href="#life-cycle">Life Cycle</a>.
      */
-    public void stopAll() throws Exception
+    public void stopAll()
     {
         tcpServer.stopAll();
         // message?
@@ -249,7 +249,7 @@ public class HttpServer
      *     </li>
      * </ol>
      */
-    public void stop(Duration graceTimeout) throws Exception
+    public void stop(Duration graceTimeout)
     {
         tcpServer.stop(graceTimeout);
         // message?

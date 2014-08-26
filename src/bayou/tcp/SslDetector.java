@@ -1,6 +1,7 @@
 package bayou.tcp;
 
 import _bayou._tmp._JobTimeout;
+import _bayou._tmp._Util;
 import bayou.async.Async;
 import bayou.util.Result;
 
@@ -37,7 +38,7 @@ class SslDetector
         // nothing else to clean up
 
         if(cause!=null)
-            TcpServer.logErrorOrDebug(cause);
+            _Util.logErrorOrDebug(TcpServer.logger, cause);
 
         // `this` then becomes garbage. nobody is referencing me
     }

@@ -103,6 +103,24 @@ public class _Util
         logger.log(level, "%s", error);
     }
 
+    public static void logUnexpected(_Logger logger, Throwable t) // not supposed to happen, should print by default
+    {
+        logger.error("Unexpected error: %s", t);
+    }
+
+    public static void closeNoThrow(AutoCloseable closeable, _Logger logger)
+    {
+        try
+        {
+            closeable.close();
+        }
+        catch(Exception e)
+        {
+            logUnexpected(logger, e);
+        }
+    }
+
+
 
     // ref contains hash of the msg and a unique id, , e.g. "84ef2ff0#3"
     // typically, app logs the msg with the ref, then show the ref to end user.

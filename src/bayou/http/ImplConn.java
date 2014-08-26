@@ -47,7 +47,11 @@ class ImplConn
             promise = new Promise<>();
             promise.fiberTracePop();
 
-            jump(Goto.reqNew);  // nbConn is usually readable from the beginning
+            jump(Goto.reqNew);
+            // based on browser tests, the connection is often readable here, right after establishment.
+            // some browsers may open and hold some idle connections, without immediate 1st requests.
+            // that's not blessed by spec. we don't care for that. we expect an immediate 1st request,
+            // so the timeout here is requestHeadTimeout, not keepAliveTimeout. (they do have the same default values)
 
             return promise;
         });

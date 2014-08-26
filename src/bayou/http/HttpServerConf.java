@@ -1,5 +1,6 @@
 package bayou.http;
 
+import _bayou._tmp._Tcp;
 import _bayou._tmp._TrafficDumpWrapper;
 import _bayou._tmp._ChArr;
 import _bayou._tmp._Util;
@@ -303,8 +304,25 @@ public class HttpServerConf
     }
 
 
-
-
+    /**
+     * Ids of selectors for this server.
+     * <p><code>
+     *     default: [0, 1, ... N-1] where N is the number of processors
+     * </code></p>
+     * <p>
+     *     Conceptually there are infinitely number of selectors, each associated with a dedicated thread.
+     *     A server may choose to use any one or several selectors.
+     *     Different servers/clients can share same selectors or use different selectors.
+     * </p>
+     * @return `this`
+     */
+    public HttpServerConf selectorIds(int... selectorIds)
+    {
+        assertCanChange();
+        _Tcp.validate_confSelectorIds(selectorIds);
+        tcp.confSelectorIds = selectorIds;
+        return this;
+    }
 
 
 
@@ -1185,6 +1203,10 @@ public class HttpServerConf
     public int get_maxConnectionsPerIp()
     {
         return tcp.confMaxConnectionsPerIp;
+    }
+    public int[] get_selectorIds()
+    {
+        return tcp.confSelectorIds;
     }
     public boolean get_plainEnabled()
     {

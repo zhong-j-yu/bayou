@@ -1,5 +1,6 @@
 package bayou.async;
 
+import _bayou._async._WithPreferredFiberDefaultExec;
 import _bayou._async._WithThreadLocalFiber;
 import _bayou._log._Logger;
 
@@ -25,11 +26,11 @@ class FiberDefaultExecutors
 
     static final AtomicInteger select = new AtomicInteger(0);
 
-    static Exec getOneExec()
+    static Executor getOneExec()
     {
         Thread thread = Thread.currentThread();
-        if(thread instanceof ExecThread) // see [inside-local-loop]
-            return ((ExecThread)thread).exec;
+        if(thread instanceof _WithPreferredFiberDefaultExec) // see [inside-local-loop]
+            return ((_WithPreferredFiberDefaultExec)thread).getPreferredFiberDefaultExec();
 
         int random = select.getAndIncrement() % N;
         return executors[random];
@@ -70,7 +71,7 @@ class FiberDefaultExecutors
         }
     }
 
-    static class ExecThread extends Thread implements _WithThreadLocalFiber
+    static class ExecThread extends Thread implements _WithPreferredFiberDefaultExec, _WithThreadLocalFiber
     {
         final Exec exec;
         final Object lock;
@@ -86,6 +87,12 @@ class FiberDefaultExecutors
 
             this.exec = exec;
             this.lock = exec.lock;
+        }
+
+        @Override
+        public Executor getPreferredFiberDefaultExec()
+        {
+            return exec;
         }
 
         void addLocal(Runnable event)

@@ -1,5 +1,6 @@
 package bayou.async;
 
+import _bayou._async._Asyncs;
 import _bayou._tmp._Exec;
 import bayou.util.Result;
 import bayou.util.function.*;
@@ -143,6 +144,30 @@ public interface Async<T>
     {
         return pollResult() != null;
     }
+
+
+    /**
+     * Block the current thread util this async action completes; return the result or throw the exception.
+     * <p>
+     *     If the current thread is interrupted while it's being blocked by this method,
+     *     this async action will receive a cancellation request with `InterruptedException` as reason.
+     * </p>
+     * <p>
+     *     This method does not have a timeout parameter;
+     *     if timeout is needed, consider `action.timeout(duration).sync()`.
+     * </p>
+     * <p>
+     *     <b>Caution:</b> This is a blocking method, which usually should not be called in an async application.
+     *     Because this method blocks the current thread, deadlock is possible
+     *     if the current thread is needed for completion of this async action.
+     *     Be very careful if you use this method on a production system.
+     * </p>
+     */
+    public default T sync() throws Exception
+    {
+        return _Asyncs.await(this).getOrThrow();
+    }
+
 
     /**
      * Register a callback that will be invoked after the action is completed.

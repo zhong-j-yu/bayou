@@ -1,12 +1,9 @@
 package bayou.tcp;
 
 
-import _bayou._async._WithThreadLocalFiber;
 import _bayou._log._Logger;
-import _bayou._tmp._Exec;
+import _bayou._tmp._Tcp;
 import _bayou._tmp._Util;
-import bayou.async.Async;
-import bayou.async.Promise;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -14,17 +11,11 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketAddress;
-import java.nio.ByteBuffer;
 import java.nio.channels.*;
 import java.time.Duration;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.Objects;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executor;
 import java.util.concurrent.Phaser;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -73,24 +64,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  *     You can use {@link #stop(java.time.Duration) stop(graceTimeout)} to gracefully stop the server.
  * </p>
  */
+
+// abstract class/method is not a good design choice. too late to fix it now.
+// no big deal, since this class is rarely used directly by app.
+
 abstract public class TcpServer
 {
-    // ## Flow ##
-    //
-    // a flow is a sequence of actions each happens-before the next. flows can intersect, merge and split.
-    // usually for each chann, read(or write) related actions form one read(or write) flow.
-    //
-    // we have N selectors. each chann belong to one selector. all select related actions happen on the selector flow.
-    // originally each selector has a thread, and the flow is same as the thread.
-    // after a selector is killed, further actions related to the selector are done on the orphan event
-    // executor flow. that is also considered on the selector flow.
-    //
-    // when a select related action, e.g. awaitReadable, needs to be carried out,
-    // it's submitted as an event, which the selector flow will pick up and process.
-    //
-    // onAccept() starts both read and write flows for a chann, and they are on the selector flow.
-    // r/w flow can split from selector flow, e.g. to do some blocking actions.
-    // use the executor to bring the flow back to selector flow.
+    static final _Logger logger = _Logger.of(TcpServer.class);
 
     /**
      * Handle an accepted channel.
@@ -126,11 +106,29 @@ abstract public class TcpServer
      * </code></p>
      */
     public int confServerPort = 2048; // not a well-known or registered port.
+    // 0 is ok, meaning an automatic port
 
-    // hide this conf for now; fixed as number of CPUs
-    //    we may change selector thread design later. multiple servers may share selectors.
-    int confNumberOfSelectors = Runtime.getRuntime().availableProcessors();
-    // note WindowsSelectorImpl creates one sub-selector/thread for every 1024 channels.
+    /**
+     * Ids of selectors for this server.
+     * <p><code>
+     *     default: [0, 1, ... N-1] where N is the number of processors
+     * </code></p>
+     * <p>
+     *     Conceptually there are infinitely number of selectors, each associated with a dedicated thread.
+     *     A server may choose to use any one or several selectors.
+     *     Different servers/clients can share same selectors or use different selectors.
+     * </p>
+     */
+    public int[] confSelectorIds = defaultSelectorIds();
+
+    static int[] defaultSelectorIds()
+    {
+        int N = Runtime.getRuntime().availableProcessors();
+        int[] ids = new int[N];
+        for(int i=0; i<N; i++)
+            ids[i] = i;
+        return ids;
+    }
 
     /**
      * Server socket backlog.
@@ -225,16 +223,19 @@ abstract public class TcpServer
 
     // ------------------------------------------------------------------------------------
 
+    final Object lock = new Object();
+
     /**
      * The server socket channel.
      */
     protected ServerSocketChannel serverSocketChannel;
     // we expose it in confServerSocket() anyway, so make it protected.
+    // subclass may read info from it, e.g. the actual ip/port after bind()
 
-    SelectorFlow[] selectorFlows;
+    ServerAgent[] serverAgentList; // one per selector thread
     Phaser phaser;
-    enum ServerState{ err, init, accepting, acceptingPaused, acceptingStopped }
-    volatile ServerState state_volatile;
+    enum ServerState{ err, init, accepting, acceptingPaused, acceptingStopped, allStopped }
+    volatile ServerState state;
     ConcurrentHashMap<InetAddress,AtomicInteger> ip2Channs;
 
     /**
@@ -242,138 +243,169 @@ abstract public class TcpServer
      */
     protected TcpServer()
     {
-        synchronized (this)
+        synchronized (lock)
         {
-            state_volatile = ServerState.init;
+            state = ServerState.init;
         }
     }
 
-    // note: many methods are synchronized
+    ServerState getState()
+    {
+        synchronized (lock)
+        {
+            return state;
+        }
+    }
 
     /**
      * Start the server. See <a href="#life-cycle">Life Cycle</a>.
      */
-    synchronized
     public void start() throws Exception
     {
-        if(state_volatile !=ServerState.init)
-            throw new IllegalStateException(state_volatile.toString());
-
-        state_volatile =ServerState.err; // will be reset later if nothing goes wrong
+        synchronized (lock)
         {
-            _Util.require(confMaxConnectionsPerIp>0, "confMaxConnectionsPerIp>0");
-            if(confMaxConnectionsPerIp<Integer.MAX_VALUE)
-                ip2Channs = new ConcurrentHashMap<>();
+            if(state !=ServerState.init)
+                throw new IllegalStateException(state.toString());
 
-            InetSocketAddress serverAddress = new InetSocketAddress(confServerIp, confServerPort);
-            serverSocketChannel = ServerSocketChannel.open();
-            serverSocketChannel.configureBlocking(false);
-            confServerSocket(serverSocketChannel);
-            serverSocketChannel.socket().bind(serverAddress, confServerSocketBacklog);
+            state =ServerState.err; // will be reset later if nothing goes wrong
+            {
+                final int NS = confSelectorIds.length;
+                _Tcp.validate_confSelectorIds(confSelectorIds);
 
-            final int NS = confNumberOfSelectors;
-            phaser = new Phaser(NS+1); // for server to sync state with selectors
+                _Util.require(confMaxConnections>0, "confMaxConnections>0");
+                int maxConnPerAgent = confMaxConnections/NS;
+                if(maxConnPerAgent*NS!=confMaxConnections)
+                    ++maxConnPerAgent;
+                // maxConnPerAgent>0
 
-            _Util.require(confMaxConnections>0, "confMaxConnections>0");
-            int maxConnPerSelector = Math.max(confMaxConnections / NS, 1); // limit evenly distributed to selectors
-            selectorFlows = new SelectorFlow[NS];
-            for(int i=0; i< NS; i++)
-                selectorFlows[i] = new SelectorFlow(i, this, serverSocketChannel, maxConnPerSelector);
+                _Util.require(confMaxConnectionsPerIp>0, "confMaxConnectionsPerIp>0");
+                if(confMaxConnectionsPerIp<Integer.MAX_VALUE)
+                    ip2Channs = new ConcurrentHashMap<>();
 
-            for(int i=0; i< NS; i++)
-                selectorFlows[i].start();
-            phaser.arriveAndAwaitAdvance();
+                InetSocketAddress serverAddress = new InetSocketAddress(confServerIp, confServerPort);
+                serverSocketChannel = ServerSocketChannel.open();
+                serverSocketChannel.configureBlocking(false);
+                confServerSocket(serverSocketChannel);
+                serverSocketChannel.socket().bind(serverAddress, confServerSocketBacklog); // throws
+
+                phaser = new Phaser(NS+1); // for server to sync state with selectors
+
+                serverAgentList = new ServerAgent[NS];
+                for(int i=0; i< NS; i++)
+                {
+                    SelectorThread selectorThread = SelectorThread.acquire(confSelectorIds[i]); // throws, unlikely tho
+                    serverAgentList[i] = new ServerAgent(i, this, selectorThread, maxConnPerAgent);
+                }
+            }
+            state =ServerState.acceptingPaused;
+
+            resumeAccepting();
         }
-        state_volatile =ServerState.accepting;
     }
 
     /**
      * Get the number of connections.
      */
-    synchronized
     public int getConnectionCount()
     {
-        SelectorFlow[] sts = selectorFlows;
-        if(sts==null)
+        ServerAgent[] serverAgentList;
+        synchronized (lock)
+        {
+            serverAgentList = this.serverAgentList;
+        }
+
+        if(serverAgentList ==null)
             return 0;
 
         int n=0;
-        for(SelectorFlow st : sts)
-            n += st.nConnections_volatile;
+        for(ServerAgent sa : serverAgentList)
+            n += sa.nConnections_volatile;
         return n;
     }
 
     /**
-     * Pausing accepting new connections. See <a href="#life-cycle">Life Cycle</a>.
+     * Pause accepting new connections. See <a href="#life-cycle">Life Cycle</a>.
      */
-    synchronized
-    public void pauseAccepting() throws Exception
+    public void pauseAccepting()
     {
-        if(state_volatile !=ServerState.accepting)
-            throw new IllegalStateException(state_volatile.toString());
+        synchronized (lock)
+        {
+            if(state !=ServerState.accepting)
+                throw new IllegalStateException(state.toString());
 
-        for(SelectorFlow st : selectorFlows)
-            st.addEvent(st.new PauseAcceptingEvent());
-        phaser.arriveAndAwaitAdvance();
-        // afterwards, no new chann will be accepted, and awaitReadable(accepting=false) will fail.
+            for(ServerAgent sa : serverAgentList)
+                sa.selectorThread.execute( sa::onPauseAccepting);
 
-        state_volatile =ServerState.acceptingPaused;
-        // we still own the port.
+            phaser.arriveAndAwaitAdvance();
+            // afterwards, no new chann will be accepted, and awaitReadable(accepting=false) will fail.
+
+            state =ServerState.acceptingPaused;
+            // we still own the port.
+        }
     }
 
     /**
      * Resume accepting new connections. See <a href="#life-cycle">Life Cycle</a>.
      */
-    synchronized
-    public void resumeAccepting() throws Exception
+    public void resumeAccepting()
     {
-        if(state_volatile !=ServerState.acceptingPaused)
-            throw new IllegalStateException(state_volatile.toString());
+        synchronized (lock)
+        {
+            if(state !=ServerState.acceptingPaused)
+                throw new IllegalStateException(state.toString());
 
-        for(SelectorFlow st : selectorFlows)
-            st.addEvent(st.new ResumeAcceptingEvent(serverSocketChannel));
+            for(ServerAgent sa : serverAgentList)
+                sa.selectorThread.execute( ()->sa.onResumeAccepting(serverSocketChannel) );
 
-        state_volatile =ServerState.accepting;
+            ServerAgent sa = serverAgentList[0]; // anyone would do
+            sa.selectorThread.execute(sa::onBecomeAccepter);
+
+            state =ServerState.accepting;
+        }
     }
 
     /**
      * Stop accepting new connections. See <a href="#life-cycle">Life Cycle</a>.
      */
-    synchronized
-    public void stopAccepting() throws Exception
+    public void stopAccepting()
     {
-        if(state_volatile !=ServerState.acceptingPaused)
-            pauseAccepting();
+        synchronized (lock)
+        {
+            if(state !=ServerState.acceptingPaused)
+                pauseAccepting(); // blocks till all selectors have handled `onPauseAccepting`
 
-        ServerSocketChannel ssc = serverSocketChannel; // to be closed
-        serverSocketChannel=null;
+            _Util.closeNoThrow(serverSocketChannel, logger);
+            serverSocketChannel=null;
+            // we don't own the port now. another server can take the port.
 
-        state_volatile =ServerState.acceptingStopped;
-
-        ssc.close(); // may throw; don't care
-
-        // we don't own the port now. another server can take the port.
+            state =ServerState.acceptingStopped;
+        }
     }
 
     /**
      * Stop accepting new connections and kill all connections. See <a href="#life-cycle">Life Cycle</a>.
      */
-    synchronized
-    public void stopAll() throws Exception
+    public void stopAll()
     {
-        if(state_volatile !=ServerState.acceptingStopped)
-            stopAccepting();
+        synchronized (lock)
+        {
+            if(state !=ServerState.acceptingStopped)
+                stopAccepting();
 
-        for(SelectorFlow st : selectorFlows)
-            st.addEvent(st.new KillEvent());  // close all connections, brutely
-        phaser.arriveAndAwaitAdvance();
+            for(ServerAgent sd : serverAgentList)
+                sd.selectorThread.execute( sd::onKill);  // close all connections, brutely
 
-        selectorFlows =null;
-        phaser=null;
-        ip2Channs =null;
+            phaser.arriveAndAwaitAdvance();
 
-        state_volatile =ServerState.init;
-        // user could call start() again on this server. but there's not much value.
+            for(ServerAgent sd : serverAgentList)
+                SelectorThread.release(sd.selectorThread);
+
+            serverAgentList = null;
+            phaser=null;
+            ip2Channs =null;
+
+            state =ServerState.allStopped;
+        }
     }
 
     /**
@@ -390,17 +422,28 @@ abstract public class TcpServer
      *     </li>
      * </ol>
      */
-    synchronized
-    public void stop(Duration graceTimeout) throws Exception
+    public void stop(Duration graceTimeout)
     {
-        long deadline = System.currentTimeMillis() + graceTimeout.toMillis();
+        synchronized (lock)
+        {
+            long deadline = System.currentTimeMillis() + graceTimeout.toMillis();
 
-        stopAccepting();
+            stopAccepting();
 
-        while(System.currentTimeMillis()<deadline && getConnectionCount()>0)
-            Thread.sleep(10);
+            while(System.currentTimeMillis()<deadline && getConnectionCount()>0)
+            {
+                try
+                {
+                    Thread.sleep(10);
+                }
+                catch (InterruptedException e)
+                {
+                    break;
+                }
+            }
 
-        stopAll();
+            stopAll();
+        }
     }
 
     // number of connections per ip. in very rare cases we may allow an ip a few extra connections.
@@ -441,754 +484,257 @@ abstract public class TcpServer
     }
 
 
-    // internally termed as 'chann', to distinguish from Java NIO channel
-    static class ChannImpl implements TcpChannel
+
+
+    // one per selector. accessed by only select flow
+    static class ServerAgent implements ChannImpl.Agent, SelectorThread.OnSelected, SelectorThread.BeforeSelect
     {
-        // following fields can be accessed by any flow
-        final SocketChannel socketChannel;
-        final SelectorFlow selectorFlow;
-        final int id;
-        ChannImpl(SocketChannel socketChannel, SelectorFlow selectorFlow, int id)
-        {
-            this.socketChannel = socketChannel;
-            this.selectorFlow = selectorFlow;
-            this.id=id;
-        }
+        final int index;
+        final TcpServer server;
+        final SelectorThread selectorThread;
+        final int maxConnPerAgent;
 
-        // for the HashSet of all ChannImpl of a selector.
-        @Override public int hashCode(){ return id; } // ids are sequential, nice as hash code
-        // default Object.equals()
-
-        @Override public InetAddress getRemoteIp(){ return socketChannel.socket().getInetAddress(); }
-
-
-        @Override public int read(ByteBuffer bb) throws Exception
-        {
-            return socketChannel.read(bb);
-        }
-        @Override public Async<Void> awaitReadable(boolean accepting)
-        {
-            SelectorFlow.AwaitReadableEvent event = selectorFlow.new AwaitReadableEvent(this, accepting);
-            selectorFlow.addEvent(event);
-            return event.promise;
-        }
-
-        @Override public long write(ByteBuffer... srcs) throws Exception
-        {
-            return socketChannel.write(srcs);
-        }
-
-        @Override public void shutdownOutput() throws Exception
-        {
-            socketChannel.shutdownOutput();
-        }
-
-        @Override public Async<Void> awaitWritable()
-        {
-            SelectorFlow.AwaitWritableEvent event = selectorFlow.new AwaitWritableEvent(this);
-            selectorFlow.addEvent(event);
-            return event.promise;
-        }
-
-        @Override
-        public Executor getExecutor()
-        {
-            return selectorFlow;
-        }
-
-        @Override public void close() // no throw
-        {
-            selectorFlow.addEvent(selectorFlow.new CloseChannEvent(this));
-        }
-
-        // following fields are accessed only by selector flow
-
-        boolean closed;
-        SelectionKey selectionKey; // initially null; register only when necessary
-        int interestOps;
-
-        boolean accepting;
-        Promise<Void> readablePromise;
-
-        Promise<Void> writablePromise;
-
-    }
-
-    static class SelectorFlow extends Thread implements Executor, _WithThreadLocalFiber
-    {
-        TcpServer server;
-        Selector selector;
+        // non-null only when server is accepting
         ServerSocketChannel serverSocketChannel;
         SelectionKey acceptSK;
 
         volatile int nConnections_volatile;
-        final int maxConnHi, maxConnLo;
-        int idSeq;
         HashSet<ChannImpl> allChann = new HashSet<>();
 
         ArrayList<ChannImpl> interestUpdateList = new ArrayList<>();
 
-        enum SelState{ accepting, not_accepting, killed}
-        SelState state;
-
-        // remote events from other threads. sync on `remoteEvents`
-        final ArrayDeque<Runnable> remoteEvents = new ArrayDeque<>(); // also as the lock
-        volatile boolean remoteEventFlag_volatile;
-        boolean blockingOnSelect =true;
-        boolean selectorThreadKilled;
-
-        final ArrayDeque<Runnable> localEvents = new ArrayDeque<>();
-
-        Object threadLocalFiber;
-
-        SelectorFlow(int id, TcpServer server, ServerSocketChannel serverSocketChannel,
-                     int maxConn) throws Exception
+        ServerAgent(int index, TcpServer server, SelectorThread selectorThread, int maxConnPerAgent)
         {
-            super("bayou TCP server selector thread #" + id);
-
+            this.index = index;
             this.server = server;
+            this.selectorThread = selectorThread;
+            this.maxConnPerAgent = maxConnPerAgent;
 
-            this.maxConnHi = maxConn; // >=1
-            this.maxConnLo = Math.max( maxConn-10, maxConn-maxConn/100 ); // 1<=lo<=hi
-
-            selector = Selector.open();
-
-            this.serverSocketChannel = serverSocketChannel;
-            this.acceptSK = serverSocketChannel.register(selector, SelectionKey.OP_ACCEPT);
+            selectorThread.execute( ()->selectorThread.actionsBeforeSelect.add(this) );
         }
-
-        @Override // Executor
-        public void execute(Runnable asyncTask)
-        {
-            Objects.requireNonNull(asyncTask);
-            addEvent(asyncTask);  // can be called on any thread
-
-            // if killed, task is diverted to the single thread orphanFlow.
-            // not big deal for tasks after kill.
-        }
-
-        @Override // _WithThreadLocalFiber
-        public Object getThreadLocalFiber()
-        {
-            return threadLocalFiber;
-        }
-        @Override // _WithThreadLocalFiber
-        public void setThreadLocalFiber(Object obj)
-        {
-            threadLocalFiber = obj;
-        }
-
-        void addEvent(Runnable event)
-        {
-            if(Thread.currentThread()==this)
-            {
-                localEvents.addLast(event);
-                return;
-            }
-
-            // addEvent() called from another thread. hopefully this is not common.
-            int x = 0;
-            synchronized (remoteEvents)
-            {
-                if(selectorThreadKilled) // orphan event, to be processed on the orphan flow
-                {
-                    x = 1; // orphanFlow.execute(event);
-                }
-                else
-                {
-                    remoteEvents.addLast(event);
-                    remoteEventFlag_volatile = true;
-
-                    if(blockingOnSelect)
-                        x=2; // selector.wakeup();
-                }
-            }
-            if(x==1)
-                orphanFlow.execute(event);
-            else if(x==2)
-                selector.wakeup();
-        }
-
-        void moveRemoteEventsToLocal()
-        {
-            assert Thread.holdsLock(remoteEvents);
-
-            localEvents.addAll(remoteEvents);
-            remoteEvents.clear();
-            remoteEventFlag_volatile = false;
-        }
-
 
         @Override
-        public void run()
+        public void beforeSelect()
         {
-            state = SelState.accepting;
+            for(ChannImpl chann : interestUpdateList)
+                chann.updateInterest();
+            interestUpdateList.clear();
+        }
 
-            server.phaser.arriveAndAwaitAdvance(); // happens-before any addEvent()
+        @Override
+        public void toUpdateInterest(ChannImpl chann)
+        {
+            interestUpdateList.add(chann);
+        }
 
+        @Override
+        public void addChann(ChannImpl chann)
+        {
+            allChann.add(chann);
+            // this method is called by new ChannImpl()
+            // nConnections_volatile &  ip2Channs handled by caller
+        }
+        @Override
+        public void removeChann(ChannImpl chann)
+        {
+            allChann.remove(chann);
+            nConnections_volatile--;
+            server.ip2Channs_dec(chann.getRemoteIp());
+        }
+
+        @Override
+        public boolean allowAcceptingRead()
+        {
+            return acceptSK!=null;
+        }
+
+
+        // only one thread is the "accepter" at a time.
+        // accepted connections are distributed among all threads evenly.
+        // then, the thread with the least connections becomes the next accepter
+
+        void onResumeAccepting(ServerSocketChannel serverSocketChannel)
+        {
+            this.serverSocketChannel = serverSocketChannel;
             try
             {
-                while( run1() ) continue;
+                acceptSK = serverSocketChannel.register(selectorThread.selector, 0, this);
+                // note: interestOp==0, this thread is not the "accepter" yet
             }
-            catch(RuntimeException|Error t) // unrecoverable; `this` is corrupt.
+            catch(ClosedChannelException e) // impossible
             {
-                logUnexpected(t); // extra log
-                throw t;
-                // residue events and future events won't be run
+                throw new AssertionError(e);
             }
         }
 
-        // events
-        //     channel events from select()
-        //         acceptable, readable, writable
-        //     channel ops from app
-        //         AwaitR, AwaitW, close
-        //         start/stopAccept, kill
-        //     tasks from app
-        // when processing an event, it may raise more events, which are put in local event queue.
-        // app may raise events from other threads, these are remote events, that need to enter this thread.
-
-        boolean run1()
+        void onBecomeAccepter()
         {
-            int selectR;
-            try
-            {
-                if(blockingOnSelect) // can read it without sync{}, cause only this thread writes to it.
-                {
-                    selectR = selector.select();     // await channel events
+            if(acceptSK==null)  // an onPauseAccepting event came earlier
+                return;
 
-                    synchronized (remoteEvents)
-                    {   blockingOnSelect = false;   }
-                }
-                else
-                {
-                    selectR = selector.selectNow(); //  poll channel events
-                }
-            }
-            catch (Exception t) // fatal, can't handle
-            {
-                throw new RuntimeException(t);
-            }
+            acceptSK.interestOps(SelectionKey.OP_ACCEPT);
 
-            // channel events ==============================================================================
-            // process acceptable/readable/writable events. may generate local events
-            if(selectR>0)
-            {
-                for(SelectionKey sk : selector.selectedKeys())
-                {
-                    if(!sk.isValid()) // impossible; no other threads mess with the key.
-                    {
-                        logUnexpected(new AssertionError("sk not valid"));
-                        continue; // the problem is probably not crippling
-                    }
+            // we could immediately try accept() here, but it most likely would fail.
+        }
 
-                    if(sk.isAcceptable())
-                    {
-                        onAcceptable();
-                    }
-                    else
-                    {
-                        ChannImpl chann = (ChannImpl)sk.attachment();
-                        if(sk.isReadable())
-                        {
-                            onReadable(chann, null);
-                        }
-                        if(sk.isWritable())
-                        {
-                            onWritable(chann, null);
-                        }
-                    }
-                }
-                selector.selectedKeys().clear();
-            }
-
-            // local event loop =========================================================================
-
-            long loopEndTime = System.nanoTime() + 100_000;
-            // local event loop may be dominated by some channels (by successively adding new events)
-            // so that we don't have a chance to check channel events, or update channel interests.
-            // so we'll run loop only for a finite time, then exit to take care of the two concerns.
-            int iLoop=0;
+        @Override
+        public void onSelected(SelectionKey sk)
+        {
+            ServerAgent[] serverAgentList = server.serverAgentList;
+            int connList[] = new int[serverAgentList.length];
+            for(int i=0; i<serverAgentList.length; i++)
+                connList[i] = serverAgentList[i].nConnections_volatile;
+            // we are not counting connections still queued for onInitChann()
+            // which can be a problem on a very busy server
 
             while(true)
             {
-                if(remoteEventFlag_volatile)  /*0*/
-                {
-                    synchronized (remoteEvents)
-                    {
-                        moveRemoteEventsToLocal();
-                    }
-                }
-
-                Runnable event = localEvents.pollFirst();
-                if(event==null)
-                {
-                    synchronized (remoteEvents)
-                    {
-                        if(!remoteEventFlag_volatile) // local & remove events are depleted. end this event loop
-                        {
-                            if(state==SelState.killed) // there was a KillEvent. rare.
-                            {
-                                // kill this selector thread. no more channel events. no more local events.
-                                selectorThreadKilled = true; // future remote events go to the orphan thread
-                                return false;  // exit run()
-                            }
-                            else // awaiting channel events, block on select()
-                            {
-                                blockingOnSelect = true;
-                                break;
-                            }
-                        }
-                        else // remote events. should be rare, coz we just checked the flag at /*0*/
-                        {
-                            moveRemoteEventsToLocal();
-                            // goto /*1*/, then goto /*2*/
-                        }
-                    }
-                    /*1*/
-                    event = localEvents.pollFirst(); // non null
-                }
-
-                /*2*/
-                try
-                {
-                    event.run(); // may add more local events
-                }
-                catch (RuntimeException e) // in case user code throws unexpectedly
-                {
-                    logUnexpected(e);
-                    // one chann flow may be corrupted; but keep the selector going
-                }
-
-                // nanoTime() can be expensive (600ns on win7 !?). do it occasionally.
-                if( ( ++iLoop & ((1<<8)-1) ) !=0 )  // check time once per 2^8
-                    continue;
-
-                if(loopEndTime-System.nanoTime()<0) // not `loopEndTime<nanoTime()`, see nanoTime() javadoc
-                {
-                    synchronized (remoteEvents)
-                    {
-                        if(remoteEventFlag_volatile)
-                            moveRemoteEventsToLocal();
-
-                        blockingOnSelect = localEvents.isEmpty();
-                        // usually false, meaning we'll poll channel events by selectNow().
-                        // it'll be coincidental that loopEndTime is passed && events are depleted.
-                    }
-                    break;
-                }
-
-            } // while(true)
-
-            // simple/fast events: CloseChann, AwaitReadable, AwaitWritable.
-            // PauseAccepting, Kill can be slow. ResumeAccepting is fast.
-
-
-            // interest ops =========================================================================
-
-            // a chann may be added in the list multiple times for opposite purposes. example case:
-            // a chann becomes readable - we turn off read interest - awaitReadable() turns it back on.
-            // here we check accumulated effect, so we may avoid unnecessary interest updates.
-            for(ChannImpl chann : interestUpdateList)
-                mayUpdateInterest(chann);
-            interestUpdateList.clear();
-
-            if(state==SelState.accepting) // turn on/off OP_ACCEPT near maxConn
-            {
-                int nConn = nConnections_volatile;
-                int acceptInterest = acceptSK.interestOps();
-                if(nConn >= maxConnHi && acceptInterest!=0)
-                    acceptSK.interestOps(0);
-                else if(nConn < maxConnLo && acceptInterest==0)
-                    acceptSK.interestOps(SelectionKey.OP_ACCEPT);
-            }
-
-            return true; // repeat, goto select()/selectNow()
-        }
-
-        void onAcceptable()
-        {
-            int nConn = nConnections_volatile;
-            while(true) // may accept multiple connections
-            {
-                if(nConn>=maxConnHi)
-                    break;
-
                 SocketChannel socketChannel;
                 try
                 {   socketChannel = serverSocketChannel.accept();   }
                 catch(Exception e) // fatal, can't handle
                 {   throw new RuntimeException(e);   }
+                // note: serverSocketChannel can be closed only after PauseAccepting,
+                // therefore it must be not-closed here.
 
-                if(socketChannel==null) // no more. also possible another selector flow accepted before us.
+                if(socketChannel==null)
                     break;
 
-                InetAddress ip = socketChannel.socket().getInetAddress();
-                if(!server.ip2Channs_tryInc(ip)) // too many connections from the ip
-                {
-                    closeNoThrow(socketChannel);
-                    continue;
-                }
+                // tcp handshake was complete, the client considers that the connection is established.
+                // however the server may immediately close the connection because of limits,
+                // the client won't know until it reads from or write to the connection.
 
-                try
-                {
-                    server.confSocket(socketChannel);
-                    socketChannel.configureBlocking(false); // do it after user code in confSocket()
-                }
-                catch(Exception e)
-                {
-                    logUnexpected(e);
-                    closeNoThrow(socketChannel);
-                    break; // another accept() probably will fail too
-                }
+                // dispatch the connection to the thread with the least connections
+                int indexMin = findMinConn(this.index, connList);
+                ++connList[indexMin];
+                ServerAgent agent = serverAgentList[indexMin];
+                agent.selectorThread.execute( ()->agent.onInitChann(socketChannel) );
+                // typically, agent==this, in which case we still postpone onInitChann() to later time
+                // because we want to do accept() first to empty the backlog.
 
-                ChannImpl chann = new ChannImpl(socketChannel, this, idSeq++);
-                allChann.add(chann);
-                nConn++;
-                nConnections_volatile = nConn;
-
-                try
-                {   server.onAccept(chann);   } // user code, must not throw
-                catch(Exception t)
-                {   logUnexpected(t);   } // probably not crippling
+                // try accept() again.
+                // typically, next accept() will return null. unless there's a flood of connections.
             }
+
+            // choose the next "accepter", the thread with the least connections
+            int indexMin = findMinConn(this.index, connList);
+            if(indexMin!=this.index)
+            {
+                ServerAgent agent = serverAgentList[indexMin];
+                agent.selectorThread.execute(agent::onBecomeAccepter);
+                acceptSK.interestOps(0);
+            }
+            // else, this thread is still the accepter.
+
+        }
+        // find the thread with the least connections. preferably this thread.
+        static int findMinConn(int thisIndex, int[] connList)
+        {
+            int indexMin = thisIndex;
+            int connMin = connList[indexMin];
+            for(int i=0; i<connList.length; i++)
+                if(connList[i]<connMin)
+                    connMin = connList[indexMin=i];
+            return indexMin;
         }
 
-        void closeNoThrow(SocketChannel socketChannel)
+        Void _abandon(SocketChannel socketChannel)
         {
+            --nConnections_volatile;
+            _Util.closeNoThrow(socketChannel, logger);
+            return (Void)null;
+        }
+        Void onInitChann(SocketChannel socketChannel)
+        {
+            ++nConnections_volatile; // inc it asap. won't overflow.
+
+            if(acceptSK==null) // onPauseAccepting arrived earlier
+                return _abandon(socketChannel);
+
+            if(nConnections_volatile>maxConnPerAgent)
+                return _abandon(socketChannel);
+
+            InetAddress ip = socketChannel.socket().getInetAddress();
+
+            if(!server.ip2Channs_tryInc(ip)) // too many connections from that ip
+                return _abandon(socketChannel);
+
             try
-            {   socketChannel.close();   }
+            {
+                socketChannel.configureBlocking(false);
+                server.confSocket(socketChannel);
+            }
             catch(Exception e)
-            {   logUnexpected(e);   }
+            {
+                _Util.logUnexpected(logger, e);
+                server.ip2Channs_dec(ip);
+                return _abandon(socketChannel);
+            }
+
+            ChannImpl chann = new ChannImpl(socketChannel, selectorThread, this);
+            try
+            {
+                server.onAccept(chann); // user code, must not throw
+            }
+            catch(RuntimeException t) // probably not crippling. not sure what to do with chann here.
+            {
+                _Util.logUnexpected(logger, t);
+            }
+            return (Void)null;
         }
 
-        class PauseAcceptingEvent implements Runnable
+
+        void onPauseAccepting()
         {
-            @Override public void run()
+            assert acceptSK!=null;
+
+            acceptSK.cancel();
+            acceptSK=null;
+            serverSocketChannel=null;
+
+            // for every chann in awaitReadable(accepting=true), call back with error
+            for(ChannImpl chann : allChann)
             {
-                assert state==SelState.accepting;
-
-                acceptSK.cancel();
-                acceptSK=null;
-                serverSocketChannel=null; // not up to me to close it
-
-                // for every `accepting` chann, call back with error
-                // brute un-indexed iteration. ok to be slow for this event
-                for(ChannImpl chann : allChann)
+                if(chann.acceptingR) // => chann.readablePromise!=null
                 {
-                    if(chann.accepting) // => it must be awaiting readable
-                    {
-                        onReadable(chann, new IOException("server stops accepting new connections"));
-                        // most likely callback will raise a close event
-                    }
-                }
-
-                state = SelState.not_accepting;
-
-                server.phaser.arrive();
-                // afterwards, event issuer may choose to close server socket.
-                //
-                // also it's guaranteed that no more new chann will be created,
-                // and no more successful readable of "accepting" nature
-                // (so for http, no more new http requests)
-                // event issuer may rely on this guarantee for its state management.
-            }
-        }
-
-        class ResumeAcceptingEvent implements Runnable
-        {
-            ServerSocketChannel serverSocketChannel;
-            ResumeAcceptingEvent(ServerSocketChannel serverSocketChannel)
-            {
-                this.serverSocketChannel = serverSocketChannel;
-            }
-
-            @Override public void run()
-            {
-                assert state==SelState.not_accepting;
-
-                SelectionKey acceptSK;
-                try
-                {   acceptSK = serverSocketChannel.register(selector, SelectionKey.OP_ACCEPT);   }
-                catch(ClosedChannelException e)
-                {   throw new AssertionError(e); } // fatal, can't handle
-
-                SelectorFlow.this.serverSocketChannel = serverSocketChannel;
-                SelectorFlow.this.acceptSK = acceptSK;
-
-                state = SelState.accepting;
-            }
-        }
-
-        class KillEvent implements Runnable
-        {
-            @Override public void run()
-            {
-                assert state==SelState.not_accepting;
-
-                // close all connections.
-                for(ChannImpl chann : allChann)
-                {
-                    assert !chann.closed;
-                    doClose(chann);
-                    // that may invoke r/w callback with error, which may add more (close) events.
-                    // those events are queued and processed by event loop later. (not orphan)
-                }
-                allChann=null;
-
-                interestUpdateList=null;
-
-                try
-                {   selector.close();   }
-                catch(Exception e)
-                {   logUnexpected(e);   }
-                selector = null;
-
-                Phaser phaser = server.phaser; // need it later
-                server = null;
-
-                state=SelState.killed;
-
-                // we cleared stuff that no future events should need.
-                // note `events` list may still contain events. these events are post-kill, but not orphan.
-                // event loop will handle these events. they can only be Close, AwaitR, AwaitW, events.
-                // they must check kill state (or check chann.closed - all channels are closed after kill event)
-                // afterwards `events` list becomes empty, events after that are orphans.
-
-                phaser.arrive();
-                // event issuer now knows that all chann closed; no read/write/awaitRW/yield() works.
-            }
-        }
-
-        class AwaitReadableEvent implements Runnable
-        {
-            ChannImpl chann;
-            Promise<Void> promise;
-            boolean accepting;
-            AwaitReadableEvent(ChannImpl _chann, boolean accepting)
-            {
-                this.chann = _chann;
-                this.accepting = accepting;
-                this.promise = new Promise<>();
-                promise.onCancel(reason ->
-                    addEvent(new CancelAwaitReadableEvent(chann, promise, reason)));
-            }
-            @Override  public void run()
-            {
-                if(chann.readablePromise!=null) // programming error
-                {
-                    promise.fail(new IllegalStateException("already awaiting readable"));
-                }
-                else if(chann.closed) // likely closed by non-read flow; or server is killed
-                {
-                    promise.fail(new AsynchronousCloseException());
-                }
-                else if(accepting && state==SelState.not_accepting)
-                {
-                    promise.fail(new IOException("server is not accepting"));
-                }
-                else
-                {
-                    chann.readablePromise = promise;
-                    chann.accepting = accepting;
-                    interestUpdateList.add(chann); // to turn on read interest
+                    chann.onReadable(new IOException("server stops accepting new connections"));
+                    // most likely callback will raise a close event
                 }
             }
+
+            server.phaser.arrive();
+            // afterwards, event issuer may choose to close server socket.
+            //
+            // also it's guaranteed that no more new chann will be created,
+            // and no more successful readable of "accepting" nature
+            // (so for http, no more new http requests)
+            // event issuer may rely on this guarantee for its state management.
         }
 
-        class CancelAwaitReadableEvent implements Runnable
+        void onKill()
         {
-            ChannImpl chann;
-            Promise<Void> promise;
-            Exception reason;
-            CancelAwaitReadableEvent(ChannImpl chann, Promise<Void> promise, Exception reason)
+            assert acceptSK==null; // after PauseAccepting
+
+            // close all connections.
+            for(ChannImpl chann : allChann)
             {
-                this.chann = chann;
-                this.promise = promise;
-                this.reason = reason;
+                assert !chann.closed;
+                chann.xClose();
+                // that may invoke r/w callback with error, which may add more (close) events.
+                // those events are queued and processed by event loop later. (not orphan)
             }
-            @Override public void run()
-            {
-                // cancel can come arbitrarily late; check to see if it's still relevant
-                if(this.promise==chann.readablePromise)
-                    onReadable(chann, reason);
-            }
+            allChann=null;
+            nConnections_volatile=0;
+
+            interestUpdateList=null;
+
+            selectorThread.actionsBeforeSelect.remove(this);
+
+            server.phaser.arrive();
+            // event issuer now knows that all chann closed; no read/write/awaitRW/yield() works.
         }
 
-        class AwaitWritableEvent implements Runnable
-        {
-            ChannImpl chann;
-            Promise<Void> promise;
-            AwaitWritableEvent(ChannImpl _chann)
-            {
-                chann = _chann;
-                promise = new Promise<>();
-                promise.onCancel(reason ->
-                    addEvent(new CancelAwaitWritableEvent(chann, promise, reason)));
-            }
-            @Override  public void run()
-            {
-                if(chann.writablePromise!=null) // programming error
-                {
-                    promise.fail(new IllegalStateException("already awaiting writable"));
-                }
-                else if(chann.closed) // likely closed by non-write flow; or server is killed
-                {
-                    promise.fail(new AsynchronousCloseException());
-                }
-                else
-                {
-                    chann.writablePromise = promise;
-                    interestUpdateList.add(chann); // to turn on write interest
-                }
-            }
-        }
-
-        class CancelAwaitWritableEvent implements Runnable
-        {
-            ChannImpl chann;
-            Promise<Void> promise;
-            Exception reason;
-            CancelAwaitWritableEvent(ChannImpl chann, Promise<Void> promise, Exception reason)
-            {
-                this.chann = chann;
-                this.promise = promise;
-                this.reason = reason;
-            }
-            @Override public void run()
-            {
-                // cancel can come arbitrarily late; check to see if it's still relevant
-                if(this.promise==chann.writablePromise)
-                    onWritable(chann, reason);
-            }
-        }
-
-
-        class CloseChannEvent implements Runnable
-        {
-            ChannImpl chann;
-            CloseChannEvent(ChannImpl chann)
-            {
-                this.chann = chann;
-            }
-            @Override public void run()
-            {
-                // not unusually to try to close a chann multiple times
-                if(chann.closed)
-                    return;
-                // note, if state==killed/eventLoopGone, chann.close==true
-
-                doClose(chann);
-                allChann.remove(chann);
-            }
-        }
-
-
-        void doClose(ChannImpl chann) // no throw
-        {
-            assert !chann.closed;
-
-            closeNoThrow(chann.socketChannel); // will cancel selection key if any
-            chann.selectionKey=null; // possibly was null (never registered)
-            chann.interestOps=0;
-
-            // if awaiting r/w-able, call back with exception.
-            if(chann.readablePromise !=null)
-            {
-                onReadable(chann, new AsynchronousCloseException());
-                // callback may add another close event
-            }
-            if(chann.writablePromise !=null)
-            {
-                onWritable(chann, new AsynchronousCloseException());
-                // callback may add another close event
-            }
-
-            // keep chann 's reference to socketChannel and selectorFlow
-            chann.closed=true;
-            //allChann.remove(chann);
-
-            nConnections_volatile--;
-            server.ip2Channs_dec(chann.getRemoteIp());
-
-            // no need to remove chann from interestUpdateList. mayUpdateInterest() checks chann.closed.
-        }
-
-        void onReadable(ChannImpl chann, Exception error) // no throw
-        {
-            Promise<Void> promise = chann.readablePromise;
-            chann.readablePromise = null;
-            interestUpdateList.add(chann); // to turn off read interest
-
-            chann.accepting = false; // clean other read state
-
-            if(error==null)
-                promise.succeed(null);
-            else
-                promise.fail(error);
-        }
-        void onWritable(ChannImpl chann, Exception error) // no throw
-        {
-            Promise<Void> promise = chann.writablePromise;
-            chann.writablePromise = null;
-            interestUpdateList.add(chann); // to turn off write interest
-
-            if(error==null)
-                promise.succeed(null);
-            else
-                promise.fail(error);
-        }
-
-        void mayUpdateInterest(ChannImpl chann)
-        {
-            if(chann.closed)
-                return;
-
-            int newOps = 0;
-            if(chann.readablePromise!=null)
-                newOps |= SelectionKey.OP_READ;
-            if(chann.writablePromise!=null)
-                newOps |= SelectionKey.OP_WRITE;
-
-            if(newOps==chann.interestOps)
-                return;
-
-            // else update interestOps on selection key
-            chann.interestOps=newOps;
-            if(chann.selectionKey!=null)
-            {
-                chann.selectionKey.interestOps(newOps); // this is not cheap; that's why we try to avoid it
-            }
-            else // not registered yet
-            {
-                try
-                {
-                    chann.selectionKey=chann.socketChannel.register(selector, newOps, chann); // expensive
-                }
-                catch (ClosedChannelException e) // impossible
-                {    throw new AssertionError(e);   }
-            }
-        }
-
-
-    } // class SelectorFlow
-
-    static final _Logger logger = _Logger.of(TcpServer.class);
-
-    static void logUnexpected(Throwable t) // not supposed to happen, should print by default
-    {
-        logger.error("Unexpected error: %s", t);
     }
-    static void logErrorOrDebug(Throwable error)  // depends on if exception is checked
-    {
-        _Util.logErrorOrDebug(logger, error);
-    }
-
-    // tasks are serialized
-    // 1 flow for all (even multiple servers), since tasks are small, quick, non-blocking.
-    //   (orphan events can only be Close, AwaitR/W/Turn, and chann is closed when an orphan event is processed)
-    static final ThreadPoolExecutor orphanFlow = _Exec.newSerialExecutor("NbTcpServer.orphanFlow");
-    // the thread is useless most of time. fortunately it expires quickly (after 10 sec)
 
 
 }

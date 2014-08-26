@@ -285,6 +285,10 @@ public class Fiber<T>
             return fiber.getExecutor();
         else
             return defaultExecutor();
+
+        // in the fiber-less case, the current executor should behave such that when a submitted task
+        //    is running, currentExecutor() should return the same executor.
+        // in the fiber-ful case, that is guaranteed - the task will see Fiber.current()==fiber.
     }
 
     // ===============================================================================================================
@@ -584,7 +588,6 @@ public class Fiber<T>
      *     Be very careful if you use this method on a production system.
      * </p>
      */
-    // why do we even provide this method? not sure. maybe useful in main() and unit tests?
     public Result<T> block()
     {
         return _Asyncs.await(this.join());

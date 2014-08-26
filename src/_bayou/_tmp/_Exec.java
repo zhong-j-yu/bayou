@@ -76,6 +76,12 @@ public class _Exec
             // if it turns out to be a problem, we'll disable timeout. maybe write our own impl.
             scheduler.setKeepAliveTime(threadKeepAliveMs, TimeUnit.MILLISECONDS);
             scheduler.allowCoreThreadTimeOut(true);
+            // the timeout behavior is weird, if most tasks are cancelled before the timeout is reached.
+            // e.g. use ApacheBench to send continuously requests to an http server,
+            // we'll see that the scheduler thread exists quickly, immediately followed by a new thread, and so on.
+            // that can be a problem.
+            // but when dealing with real browser clients, where there are usually keep-alive connections
+            // idling for seconds, there's no problem. so we are not worried about it at this time.
         }
     }
 

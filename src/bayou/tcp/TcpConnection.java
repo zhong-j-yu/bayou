@@ -167,6 +167,10 @@ public interface TcpConnection
      *     Spurious wakeup is possible - this action may succeed yet the next read() sees STALL again.
      * </p>
      */
+//     * <p>
+//     *     The parameter <code>`accepting`</code> has no meaning if this channel is from
+//     *     a client; the <code>false</code> value is recommended in that case.
+//     * </p>
     Async<Void> awaitReadable(boolean accepting);
     // usually called if a prev read() returns STALL;
     //   can be called if not (speculating that source is not readable)
