@@ -2,6 +2,7 @@ package bayou.tcp;
 
 import bayou.async.Async;
 import bayou.async.Promise;
+import bayou.ssl.SslConnection;
 import bayou.util.End;
 import bayou.util.Result;
 
@@ -37,13 +38,7 @@ class AsyncConnectionImpl implements AsyncConnection
     @Override
     public InetAddress getRemoteIp()
     {
-        return nbConn.getRemoteIp();
-    }
-
-    @Override
-    public boolean isSsl()
-    {
-        return nbConn.isSsl();
+        return nbConn.getPeerIp();
     }
 
     // -- read --
@@ -78,7 +73,7 @@ class AsyncConnectionImpl implements AsyncConnection
 
         if(bb== TcpConnection.TCP_FIN)
             return End.async();
-        if(bb== TcpConnection.SSL_CLOSE_NOTIFY)
+        if(bb== SslConnection.SSL_CLOSE_NOTIFY)
             return End.async();
 
         if(bb!= TcpConnection.STALL) // data, remaining>0
@@ -110,7 +105,7 @@ class AsyncConnectionImpl implements AsyncConnection
 
                 if(bb== TcpConnection.TCP_FIN)
                     throw End.instance();
-                if(bb== TcpConnection.SSL_CLOSE_NOTIFY)
+                if(bb== SslConnection.SSL_CLOSE_NOTIFY)
                     throw End.instance();
 
                 if(bb== TcpConnection.STALL) // spurious wakeup from awaitReadable(). await again

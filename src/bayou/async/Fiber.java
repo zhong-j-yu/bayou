@@ -294,7 +294,7 @@ public class Fiber<T>
     // ===============================================================================================================
 
     volatile String name_volatile;
-    final static AtomicLong anonFiberCount = new AtomicLong(0); // for automatic naming
+    final static AtomicLong anonFiberCount = new AtomicLong(1); // for automatic naming
 
     final ExecutorWrap executorWrap;
 

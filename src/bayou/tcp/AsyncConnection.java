@@ -24,8 +24,6 @@ interface AsyncConnection
 {
     InetAddress getRemoteIp();
 
-    boolean isSsl();
-
     // ----
 
     // if successful, something available to read. (successful read).

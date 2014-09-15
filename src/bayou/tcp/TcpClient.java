@@ -15,78 +15,112 @@ import java.nio.channels.*;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Non-blocking TCP client.
  */
-
-// TODO: public
-
-class TcpClient implements AutoCloseable
+public class TcpClient implements AutoCloseable
 {
     static final _Logger logger = _Logger.of(TcpClient.class);
 
     /**
-     * Configure each new socket.
-     * <p>
-     *     The default implementation
-     * </p>
-     * <p>
-     *     Subclass can override this method to set more options.
-     *     The socketChannel is in non-blocking model; it must not be changed to blocking mode.
-     * </p>
+     * Configuration for {@link TcpClient}
      */
-    // note: SO_LINGER on non-blocking socket is not well defined. enable it only if you are sure
-    //     it's ok on your tcp stack.
-    static final ConsumerX<SocketChannel> defaultSocketConf = socketChannel ->
+    public static class Conf
     {
-        socketChannel.socket().setTcpNoDelay(true);
-    };
 
+        /**
+         * Create a Conf with default values.
+         */
+        public Conf()
+        {
 
+        }
+
+        /**
+         * The id of the selector used by this client.
+         * <p><code>
+         *     default: a random value from [0, 1, ... N-1] where N is the number of processors
+         * </code></p>
+         * <p>
+         *     Note that each TcpClient uses only one selector.
+         * </p>
+         * <p>
+         *     See also {@link TcpServer.Conf#selectorIds}
+         * </p>
+         */
+        public int selectorId = pickSelectorId();
+
+        static final AtomicInteger selectorIdSeq = new AtomicInteger(0);
+        static int pickSelectorId()
+        {
+            int N = Runtime.getRuntime().availableProcessors();
+            int seq = selectorIdSeq.getAndIncrement();
+            return seq % N;
+        }
+
+        /**
+         * Action to configure each newly created socket.
+         * <p><code>
+         *     default action:
+         *     enable {@link java.net.Socket#setTcpNoDelay(boolean) TCP_NODELAY}
+         * </code></p>
+         * <p>
+         *     App may want to configure more options on each socket.
+         *     The SocketChannel is in non-blocking model; it must not be changed to blocking mode.
+         * </p>
+         */
+        public ConsumerX<SocketChannel> socketConf = socketChannel ->
+        {
+            socketChannel.socket().setTcpNoDelay(true);
+        };
+
+    }
 
     final ClientAgent agent;
 
     /**
-     * Create a TcpClient with a default `socketConf`.
-     * See {@link #TcpClient(int, bayou.util.function.ConsumerX)}.
-     * <p>
-     *     The default `socketConf`
-     *     enables {@link java.net.Socket#setTcpNoDelay(boolean) TCP_NODELAY} on each socket.
-     * </p>
-     */
-    public TcpClient(int selectorId) throws Exception
-    {
-        this(selectorId, defaultSocketConf);
-    }
-
-    /**
      * Create a TcpClient.
-     * @param selectorId
-     *        the id of the selector.
-     *        Note that each TcpClient uses only one selector.
-     *        See also {@link TcpServer#confSelectorIds}
-     * @param socketConf
-     *        action to configure each newly established socket.
-     *        The socketChannel is in non-blocking model; it must not be changed to blocking mode.
      */
-    public TcpClient(int selectorId, ConsumerX<SocketChannel> socketConf) throws Exception
+    public TcpClient(Conf conf) throws Exception
     {
-        SelectorThread selectorThread = SelectorThread.acquire(selectorId); // throws, unlikely
+        SelectorThread selectorThread = SelectorThread.acquire(conf.selectorId); // throws, unlikely
 
-        agent = new ClientAgent(selectorThread, socketConf);
+        agent = new ClientAgent(selectorThread, conf.socketConf);
     }
 
 
     /**
-     * Get the executor associated with the selector thread.
+     * Connect to a remote server.
      * <p>
-     *     Tasks submitted to the executor will be executed in the selector thread.
+     *     This action succeeds when a TcpChannel is established and ready to read/write.
+     * </p>
+     * <p>
+     *     The default timeout is probably too long; the caller should set a reasonable timeout by
+     * </p>
+     * <pre>
+     *     client.connect(peerHost, ip, port).timeout(duration)
+     * </pre>
+     * <p>
+     *     The `peerHost` argument will become the TcpChannel's
+     *     {@link TcpChannel#getPeerHost() peerHost}; it can be null.
      * </p>
      */
-    public Executor getExecutor()
+    // be careful of the current executor; in `connect(...).then(action)`,
+    //   action is run in the current executor, which might not be the selector thread.
+    // suggestion: client.getExecutor().execute( ()-> connect(...).then(action) )
+    //   or new Fiber(client.getExecutor(), ()->connect(...).then(action) )
+    //
+    // CAUTION: host->ip is a slow IO operation. Java has no async API for it yet.
+    //   we don't deal with the problem in this class. connect() only accepts ip, not host.
+    // peerHost: will become TcpChannel.peerHost.
+    //      FQDN or IP. if FQDN, will be sent as SNI by ssl client
+    //      in sun's impl, "localhost" is not considered a FQDN, therefore it won't be used as SNI.
+    //          whether that is correct is debatable. this usually shouldn't be a problem.
+    public Async<TcpChannel> connect(String peerHost, InetAddress ip, int port)
     {
-        return agent.selectorThread;
+        return agent.connect(peerHost, ip, port);
     }
 
     /**
@@ -99,28 +133,6 @@ class TcpClient implements AutoCloseable
     // another method for number of pending connections? probably unnecessary.
 
     /**
-     * Connect to a remote server.
-     * <p>
-     *     This action succeeds when a TcpChannel is established and ready to read/write.
-     * </p>
-     * <p>
-     *     The default timeout is probably too long; the caller should set a reasonable timeout by
-     *     `client.connect(ip, port).timeout(duration)`.
-     * </p>
-     */
-    // be careful of the current executor; in `connect(...).then(action)`,
-    //   action is run in the current executor, which might not be the selector thread.
-    // suggestion: client.getExecutor().execute( ()-> connect(...).then(action) )
-    //   or new Fiber(client.getExecutor(), ()->connect(...).then(action) )
-    //
-    // CAUTION: host->ip is a slow IO operation. Java has no async API for it yet.
-    //   we don't deal with the problem in this class. connect() only accepts ip, not host.
-    public Async<TcpChannel> connect(InetAddress ip, int port)
-    {
-        return agent.connect(ip, port);
-    }
-
-    /**
      * Close the client and free resources.
      * <p>
      *     All existing connections will be forcefully closed.
@@ -130,6 +142,17 @@ class TcpClient implements AutoCloseable
     public void close()
     {
         agent.selectorThread.execute( agent::onKill );
+    }
+
+    /**
+     * Get the executor associated with the selector thread.
+     * <p>
+     *     Tasks submitted to the executor will be executed in the selector thread.
+     * </p>
+     */
+    public Executor getExecutor()
+    {
+        return agent.selectorThread;
     }
 
 
@@ -197,14 +220,14 @@ class TcpClient implements AutoCloseable
 
 
 
-        Async<TcpChannel> connect(InetAddress ip, int port)
+        Async<TcpChannel> connect(String peerHost, InetAddress ip, int port)
         {
             Promise<TcpChannel> promise = new Promise<>();
-            selectorThread.execute( ()-> onInitConnect(promise, ip, port) );
+            selectorThread.execute( ()-> onInitConnect(promise, peerHost, ip, port) );
             return promise;
         }
 
-        void onInitConnect(Promise<TcpChannel> promise, InetAddress ip, int port)
+        void onInitConnect(Promise<TcpChannel> promise, String peerHost, InetAddress ip, int port)
         {
             if(closed)
             {
@@ -241,11 +264,12 @@ class TcpClient implements AutoCloseable
             if(connected) // connect() javadoc says this can happen. not observed in practice.
             {
                 ChannImpl chann = new ChannImpl(socketChannel, selectorThread, this);
+                chann.peerHost = peerHost;
                 promise.succeed(chann);
             }
             else
             {
-                Pending pending = new Pending(this, socketChannel, promise);
+                Pending pending = new Pending(this, peerHost, socketChannel, promise);
                 pending.onAwaitConnectable();
             }
 
@@ -290,12 +314,14 @@ class TcpClient implements AutoCloseable
     static class Pending implements SelectorThread.OnSelected
     {
         ClientAgent agent;
+        String peerHost;
         SocketChannel socketChannel;
         Promise<TcpChannel> connectPromise;
 
-        Pending(ClientAgent agent, SocketChannel socketChannel, Promise<TcpChannel> promise)
+        Pending(ClientAgent agent, String peerHost, SocketChannel socketChannel, Promise<TcpChannel> promise)
         {
             this.agent = agent;
+            this.peerHost = peerHost;
             this.socketChannel = socketChannel;
             this.connectPromise = promise;
         }
@@ -358,6 +384,7 @@ class TcpClient implements AutoCloseable
             // here, the client has received server ACK/SYN, and sent client ACK.
 
             ChannImpl chann = new ChannImpl(socketChannel, agent.selectorThread, agent);
+            chann.peerHost = peerHost;
             // pass selectionKey to chann
             sk.attach(chann);
             chann.selectionKey = sk;

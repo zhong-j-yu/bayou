@@ -5,28 +5,23 @@ import _bayou._tmp._TrafficDumpWrapper;
 import _bayou._tmp._ChArr;
 import _bayou._tmp._Util;
 import bayou.bytes.RangedByteSource;
-import bayou.tcp.TcpServerX;
+import bayou.ssl.SslConf;
+import bayou.tcp.TcpServer;
 import bayou.util.function.ConsumerX;
 
 import javax.net.ssl.SSLContext;
-import java.net.InetAddress;
-import java.net.ServerSocket;
-import java.net.Socket;
-import java.net.SocketAddress;
-import java.net.UnknownHostException;
+import javax.net.ssl.SSLEngine;
+import java.net.*;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.time.Duration;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.*;
 import java.util.function.Consumer;
 
 import static _bayou._tmp._Util.require;
 
 /**
- * Configuration of HttpServer.
+ * Configuration for HttpServer.
  * <p>
  *     Each config property can be set by the setter method, for example
  * </p>
@@ -39,7 +34,7 @@ import static _bayou._tmp._Util.require;
  * <pre>
  *     httpServer.conf()
  *         .port( 8080 )
- *         .trafficDump( System.out::println )
+ *         .trafficDump( System.out::print )
  *         ;
  * </pre>
  * <p>
@@ -52,13 +47,15 @@ import static _bayou._tmp._Util.require;
  *     <dt>TCP</dt>
  *     <dd>
  *         {@link #ip(java.net.InetAddress) ip} ,
- *         {@link #port(int) port} ,
+ *         {@link #port(int...) port} ,
  *         {@link #maxConnections(int) maxConnections} ,
  *         {@link #maxConnectionsPerIp(int) maxConnectionsPerIp}
  *     </dd>
  *     <dt>SSL</dt>
  *     <dd>
- *         {@link #ssl(boolean, boolean) ssl}
+ *         {@link #sslPort(int...) sslPort} ,
+ *         {@link #sslContext(javax.net.ssl.SSLContext) sslContext} ,
+ *         {@link #sslEngineConf(bayou.util.function.ConsumerX) sslEngineConf}
  *     </dd>
  *     <dt>HTTP</dt>
  *     <dd>
@@ -93,13 +90,18 @@ import static _bayou._tmp._Util.require;
 @SuppressWarnings("UnusedDeclaration")
 public class HttpServerConf
 {
-    final TcpServerX tcp;
-    HttpServerConf(TcpServerX tcp)
-    {
-        // default port for http server
-        tcp.confServerPort = 8080;
+    final TcpServer.Conf tcpConf = new TcpServer.Conf();
 
-        this.tcp = tcp;
+    // for TcpChannel2Connection. not public yet; apps probably don't care
+    int readBufferSize = 16*1024;
+    int writeBufferSize = 16*1024;
+
+
+    /**
+     * Create an HttpServerConf with default values.
+     */
+    public HttpServerConf()
+    {
     }
 
     boolean frozen;
@@ -131,6 +133,8 @@ public class HttpServerConf
 
     // conf NbTcpServer ............................................................................
 
+    InetAddress ip = new InetSocketAddress(2000).getAddress(); // wildcard address
+
     /**
      * IP address the server socket binds to.
      * <p><code>
@@ -145,7 +149,7 @@ public class HttpServerConf
     {
         assertCanChange();
         require(ip != null, "ip!=null");
-        tcp.confServerIp = ip;
+        this.ip = ip;
         return this;
     }
 
@@ -169,20 +173,40 @@ public class HttpServerConf
         }
     }
 
+    HashSet<Integer> plainPorts = new HashSet<Integer>();
+    {   plainPorts.add(8080);   }
+
     /**
-     * Port number the server socket binds to.
+     * Ports for plain connections.
      * <p><code>
-     *     default: 8080
+     *     default: {8080}
      * </code></p>
+     * <p>
+     *     Port 0 means an automatically allocated port.
+     * </p>
+     * <p>
+     *     See {@link #sslPort(int...)} for SSL ports.
+     * </p>
      * @return `this`
      */
-    // default 8080, set by constructor
-    public HttpServerConf port(int port)
+    public HttpServerConf port(int... ports)
     {
         assertCanChange();
-        // no checking? if port is bad, will fail when server starts
-        tcp.confServerPort = port;
+        this.plainPorts = checkPorts(ports);
         return this;
+    }
+
+    static HashSet<Integer> checkPorts(int... ports)
+    {
+        if(ports==null)
+            throw new NullPointerException("ports==null");
+        HashSet<Integer> set = new HashSet<Integer>();
+        for(int port : ports)
+        {
+            _Util.require( 0<=port && port<=0xffff, "0<=port<=0xffff");
+            set.add(port); // remove duplicates
+        }
+        return set;
     }
 
     // number of selectors - not configurable now. may change the design
@@ -200,62 +224,72 @@ public class HttpServerConf
     public HttpServerConf serverSocketBacklog(int serverSocketBacklog)
     {
         assertCanChange();
-        tcp.confServerSocketBacklog = serverSocketBacklog;
+        tcpConf.serverSocketBacklog = serverSocketBacklog;
         return this;
     }
 
 
-    ConsumerX<ServerSocketChannel> onServerSocket = serverSocketChannel ->
-    {
-        if(!_Util.isWindows())
-            serverSocketChannel.socket().setReuseAddress(true);
-    };
     /**
-     * Configure the server socket.
+     * Action to configure the server socket.
      * <p><code>
      *     default action:
      *     enable {@link ServerSocket#setReuseAddress(boolean) SO_REUSEADDR} if the OS is not Windows.
      * </code></p>
      * <p>
-     *     App may want to configure more options on the server socket, e.g.
-     *     {@link ServerSocket#setReceiveBufferSize(int)}.
-     *     The serverSocketChannel is in non-blocking model; it must not be changed to blocking mode.
+     *     This action will be invoked before
+     *     {@link ServerSocket#bind(SocketAddress endpoint, int backlog) ServerSocket.bind()}.
      * </p>
      * <p>
-     *     The action will be invoked before
-     *     {@link ServerSocket#bind(SocketAddress endpoint, int backlog) ServerSocket.bind()}.
+     *     App may want to configure more options on the server socket, e.g.
+     * </p>
+     * <pre>
+     *      ConsumerX&lt;ServerSocketChannel&gt; defaultAction = server.conf().get_serverSocketConf();
+     *      server.conf().serverSocketConf(
+     *          defaultAction.then(serverSocketChannel -&gt;
+     *          {
+     *              serverSocketChannel.setOption(StandardSocketOptions.SO_RCVBUF, 16*1024);
+     *          })
+     *      );
+     * </pre>
+     * <p>
+     *     The ServerSocketChannel is in non-blocking model; it must not be changed to blocking mode.
      * </p>
      *
      * @return `this`
      */
-    public HttpServerConf onServerSocket(ConsumerX<ServerSocketChannel> action)
+    public HttpServerConf serverSocketConf(ConsumerX<ServerSocketChannel> action)
     {
         require(action != null, "action!=null");
-        this.onServerSocket = action;
+        tcpConf.serverSocketConf = action;
         return this;
     }
 
-    ConsumerX<SocketChannel> onSocket = socketChannel ->
-    {
-        socketChannel.socket().setTcpNoDelay(true);
-    };
     /**
-     * Configure each newly accepted socket.
+     * Action to configure each newly accepted socket.
      * <p><code>
      *     default action:
      *     enable {@link Socket#setTcpNoDelay(boolean) TCP_NODELAY}
      * </code></p>
      * <p>
-     *     App may want to configure more options on each socket.
-     *     The socketChannel is in non-blocking model; it must not be changed to blocking mode.
+     *     App may want to configure more options on each socket, for example
+     * </p>
+     * <pre>
+     *     server.conf().socketConf( socketChannel -&gt;
+     *     {
+     *         socketChannel.setOption(StandardSocketOptions.TCP_NODELAY, true);
+     *         ...
+     *     });
+     * </pre>
+     * <p>
+     *     The SocketChannel is in non-blocking model; it must not be changed to blocking mode.
      * </p>
      *
      * @return `this`
      */
-    public HttpServerConf onSocket(ConsumerX<SocketChannel> action)
+    public HttpServerConf socketConf(ConsumerX<SocketChannel> action)
     {
         require(action != null, "action!=null");
-        this.onSocket = action;
+        tcpConf.socketConf = action;
         return this;
     }
 
@@ -274,7 +308,7 @@ public class HttpServerConf
     {
         assertCanChange();
         require(maxConnections > 0, "maxConnections>0");
-        tcp.confMaxConnections = maxConnections;
+        tcpConf.maxConnections = maxConnections;
         return this;
     }
 
@@ -299,7 +333,7 @@ public class HttpServerConf
     {
         assertCanChange();
         require(maxConnectionsPerIp > 0, "maxConnectionsPerIp>0");
-        tcp.confMaxConnectionsPerIp = maxConnectionsPerIp;
+        tcpConf.maxConnectionsPerIp = maxConnectionsPerIp;
         return this;
     }
 
@@ -310,9 +344,9 @@ public class HttpServerConf
      *     default: [0, 1, ... N-1] where N is the number of processors
      * </code></p>
      * <p>
-     *     Conceptually there are infinitely number of selectors, each associated with a dedicated thread.
+     *     Conceptually there are infinite number of selectors, each associated with a dedicated thread.
      *     A server may choose to use any one or several selectors.
-     *     Different servers/clients can share same selectors or use different selectors.
+     *     Different servers/clients can share selectors or use different selectors.
      * </p>
      * @return `this`
      */
@@ -320,157 +354,151 @@ public class HttpServerConf
     {
         assertCanChange();
         _Tcp.validate_confSelectorIds(selectorIds);
-        tcp.confSelectorIds = selectorIds;
+        tcpConf.selectorIds = selectorIds;
         return this;
     }
 
 
 
-    // conf NbTcpServerX ............................................................................
+    // conf SSL ............................................................................
+
+    HashSet<Integer> sslPorts = new HashSet<>();
 
     /**
-     * Whether to enable SSL and/or plain connections.
+     * SSL port numbers.
      * <p><code>
-     *     default: [false, true]
+     *     default: {} (none)
      * </code></p>
      * <p>
-     *     There are 3 possible modes:
+     *     {@link #port(int...) Plain ports} and SSL ports can overlap;
+     *     if a port is specified for both plain and SSL, the same port will server both plain and SSL connections.
      * </p>
-     * <ul>
-     *     <li><code>[false, true ]</code> - plain only, all connections are plain connections. This is the default.</li>
-     *     <li><code>[true , false]</code> - SSL only, all connections are SSL connections.</li>
-     *     <li><code>[true , true ]</code> - support both plain and SSL connections on the same port. </li>
-     * </ul>
+     * <pre>
+     *     server.conf()
+     *         .port   (8080)  // for http
+     *         .sslPort(8080)  // for https
+     * </pre>
      * <p>
-     *     If SSL is enabled, an {@link SSLContext} is needed -
+     *     Port 0 means an automatically allocated port.
+     *     If port 0 is specified for both plain and SSL,
+     *     a port is automatically allocated to server both plain and SSL connections.
      * </p>
-     * <ul>
-     *     <li>
-     *         If {@link #sslContext sslContext} is non-null, it is used.
-     *     </li>
-     *     <li>
-     *         Otherwise if {@link #sslKeyStoreFile sslKeyStoreFile} is non-null,
-     *         the file is used (with {@link #sslKeyStorePassword sslKeyStorePassword}) to create an SSLContext.
-     *     </li>
-     *     <li>
-     *         Otherwise, {@link SSLContext#getDefault()} is used. Typically it requires
-     *         system properties <code>javax.net.ssl.keyStore/keyStorePassword</code>.
-     *     </li>
-     * </ul>
+     * <p>
+     *     To forbid plain connections and only accept SSL connections, call
+     * </p>
+     * <pre>
+     *     server.conf()
+     *         .port() // no plain ports
+     *         .sslPort( SSL_PORT )
+     * </pre>
      *
      * @return `this`
      */
-    // ssl(false, true) sounds odd - it means plain only. but since default is plain only, user won't write that.
-    public HttpServerConf ssl(boolean sslEnabled, boolean plainEnabled)
+    public HttpServerConf sslPort(int... ports)
     {
         assertCanChange();
-
-        if(!sslEnabled && !plainEnabled)
-            throw new IllegalStateException("Either ssl or plain must be enabled (or both).");
-
-        tcp.confSslEnabled = sslEnabled;
-        tcp.confPlainEnabled = plainEnabled;
-
+        this.sslPorts = checkPorts(ports);
         return this;
     }
 
 
+    SSLContext sslContext = null;
     /**
      * SSLContext for SSL connections.
      * <p><code>
-     *     default: null
+     *     default: null (the default)
      * </code></p>
      * <p>
-     *     See {@link #ssl ssl}
+     *     If <code>null</code>, {@link SSLContext#getDefault()} is used. Typically it requires
+     *         system properties <code>javax.net.ssl.keyStore/keyStorePassword</code> etc,
+     *         see <a href=
+     *         "http://docs.oracle.com/javase/8/docs/technotes/guides/security/jsse/JSSERefGuide.html#CustomizingStores"
+     *         >JSSE Guide</a>.
+     * </p>
+     * <p>
+     *     See {@link #sslKeyStore(String, String)} for a typical way of setting the SSLContext.
+     * </p>
+     * <p>
+     *     See also {@link bayou.ssl.SslConf} for creating SSLContext.
      * </p>
      * @return `this`
      */
     public HttpServerConf sslContext(SSLContext sslContext)
     {
         assertCanChange();
-        tcp.confSslContext = sslContext;
+        this.sslContext = sslContext;
         return this;
     }
 
     /**
-     * SSL key store file.
-     * <p><code>
-     *     default: null
-     * </code></p>
+     * Set {@link #sslContext(javax.net.ssl.SSLContext) sslContext} using a key store file.
      * <p>
-     *     See {@link #ssl ssl}
+     *     This is a convenience method, equivalent to
+     * </p>
+     * <pre>
+     *      sslContext(
+     *          new SslConf()
+     *              .keyStoreFile(filePath)
+     *              .keyStorePass(password)
+     *              .createContext()
+     *      )
+     * </pre>
+     * <p>
+     *     See {@link bayou.ssl.SslConf} for more options.
      * </p>
      * @return `this`
      */
-    public HttpServerConf sslKeyStoreFile(String sslKeyStoreFile)
+    public HttpServerConf sslKeyStore(String filePath, String password) throws Exception
     {
-        assertCanChange();
-        tcp.confSslKeyStoreFile = sslKeyStoreFile;
-        return this;
+        return this.sslContext(new SslConf()
+            .keyStoreFile(filePath)
+            .keyStorePass(password)
+            .createContext()
+        );
     }
 
+    ConsumerX<SSLEngine> sslEngineConf = engine->{};
     /**
-     * SSL key store file password.
+     * Action to configure each SSLEngine.
      * <p><code>
-     *     default: null
+     *     default action:
+     *     do nothing
      * </code></p>
      * <p>
-     *     See {@link #ssl ssl}
+     *     Example:
      * </p>
+     * <pre>
+     *   server.conf().sslEngineConf( engine-&gt;
+     *   {
+     *       engine.setWantClientAuth(true);
+     *   });
+     * </pre>
      * @return `this`
      */
-    public HttpServerConf sslKeyStorePassword(String sslKeyStorePassword)
+    public HttpServerConf sslEngineConf(ConsumerX<SSLEngine> action)
     {
         assertCanChange();
-        tcp.confSslKeyStorePassword = sslKeyStorePassword;
+        this.sslEngineConf = action;
         return this;
     }
 
+
+    Duration sslHandshakeTimeout = Duration.ofSeconds(15);
     /**
      * Timeout for completing the SSL handshake on an SSL connection.
      * <p><code>
-     *     default: 10 seconds
+     *     default: 15 seconds
      * </code></p>
-     * <p>
-     *     See {@link #ssl ssl}
-     * </p>
      * @return `this`
      */
     public HttpServerConf sslHandshakeTimeout(Duration sslHandshakeTimeout)
     {
         assertCanChange();
         require(sslHandshakeTimeout != null, "sslHandshakeTimeout!=null");
-        tcp.confSslHandshakeTimeout = sslHandshakeTimeout;
+        this.sslHandshakeTimeout = sslHandshakeTimeout;
         return this;
     }
 
-
-/*      these two are not published for now
-
-    public int tcpReadSize()
-    {
-        return tcp.confReadSize;
-    }
-    public HttpServerConf tcpReadSize(int tcpReadSize)
-    {
-        assertCanChange();
-        require(tcpReadSize > 0, "tcpReadSize>0");
-        tcp.confReadSize = tcpReadSize;
-        return this;
-    }
-
-    public int tcpWriteSize()
-    {
-        return tcp.confWriteSize;
-    }
-    public HttpServerConf tcpWriteSize(int tcpWriteSize)
-    {
-        assertCanChange();
-        require(tcpWriteSize > 0, "tcpWriteSize>0");
-        tcp.confWriteSize = tcpWriteSize;
-        return this;
-    }
-*/
 
 
 
@@ -1182,55 +1210,57 @@ public class HttpServerConf
     // getters. not important to apps ==================================================================
     // do not give them javadoc. leave them blank on the method summary table
 
-    public ConsumerX<ServerSocketChannel> get_onServerSocket(){ return onServerSocket; }
-    public ConsumerX<SocketChannel> get_onSocket(){ return onSocket; }
     public InetAddress get_ip()
     {
-        return tcp.confServerIp;  // non null
+        return ip;  // non null
     }
-    public int get_port()
+    public List<Integer> get_ports()
     {
-        return tcp.confServerPort;
+        ArrayList<Integer> list = new ArrayList<>(plainPorts);
+        Collections.sort(list);
+        return list;
+    }
+    public ConsumerX<ServerSocketChannel> get_serverSocketConf()
+    {
+        return tcpConf.serverSocketConf;
+    }
+    public ConsumerX<SocketChannel> get_socketConf()
+    {
+        return tcpConf.socketConf;
     }
     public int get_serverSocketBacklog()
     {
-        return tcp.confServerSocketBacklog;
+        return tcpConf.serverSocketBacklog;
     }
     public int get_maxConnections()
     {
-        return tcp.confMaxConnections;
+        return tcpConf.maxConnections;
     }
     public int get_maxConnectionsPerIp()
     {
-        return tcp.confMaxConnectionsPerIp;
+        return tcpConf.maxConnectionsPerIp;
     }
     public int[] get_selectorIds()
     {
-        return tcp.confSelectorIds;
+        return tcpConf.selectorIds;
     }
-    public boolean get_plainEnabled()
+    public List<Integer> get_sslPorts()
     {
-        return tcp.confPlainEnabled;
-    }
-    public boolean get_sslEnabled()
-    {
-        return tcp.confSslEnabled;
-    }
-    public String get_sslKeyStoreFile()
-    {
-        return tcp.confSslKeyStoreFile;
-    }
-    public String get_sslKeyStorePassword()
-    {
-        return tcp.confSslKeyStorePassword;
+        ArrayList<Integer> list = new ArrayList<>(sslPorts);
+        Collections.sort(list);
+        return list;
     }
     public SSLContext get_sslContext()
     {
-        return tcp.confSslContext;
+        return this.sslContext;
+    }
+    public ConsumerX<SSLEngine> get_sslEngineConf()
+    {
+        return this.sslEngineConf;
     }
     public Duration get_sslHandshakeTimeout()
     {
-        return tcp.confSslHandshakeTimeout;
+        return this.sslHandshakeTimeout;
     }
 
     public Set<String> get_supportedMethods()

@@ -6,6 +6,7 @@ import bayou.async.Async;
 import bayou.async.Promise;
 import bayou.bytes.ByteSource;
 import bayou.mime.ContentType;
+import bayou.ssl.SslConnection;
 import bayou.tcp.TcpConnection;
 import bayou.util.End;
 import bayou.util.Result;
@@ -265,7 +266,7 @@ class ImplHttpRequestEntity implements HttpEntity
                 return TcpConnection.STALL;
             }
 
-            if(bb== TcpConnection.TCP_FIN || bb== TcpConnection.SSL_CLOSE_NOTIFY)
+            if(bb== TcpConnection.TCP_FIN || bb== SslConnection.SSL_CLOSE_NOTIFY)
                 throw new IOException("connection closed before end of entity body");
 
             assert bb.remaining()>0;

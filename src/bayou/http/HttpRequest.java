@@ -6,6 +6,8 @@ import bayou.mime.ContentType;
 import bayou.mime.Headers;
 
 import java.net.InetAddress;
+import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -40,6 +42,23 @@ public interface HttpRequest
      * </p>
      */
     boolean isHttps();
+
+    /**
+     * Certificates of the client. See {@link javax.net.ssl.SSLSession#getPeerCertificates()}.
+     * <p>
+     *     Return an empty list if this information is not available.
+     * </p>
+     * <p>
+     *     The default implementation returns an empty list.
+     * </p>
+     *
+     */
+    // we only expose the certs, instead of the whole SSLSession.
+    // other methods in SSLSession are probably uninteresting to app.
+    default List<java.security.cert.X509Certificate> certs()
+    {
+        return Collections.emptyList();
+    }
 
     /**
      * Request method.

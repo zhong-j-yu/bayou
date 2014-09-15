@@ -58,7 +58,25 @@ class ChannImpl implements TcpChannel, SelectorThread.OnSelected
         this.agent.addChann(this);
     }
 
-    @Override public InetAddress getRemoteIp(){ return socketChannel.socket().getInetAddress(); }
+    String peerHost;
+    @Override
+    public String getPeerHost()
+    {
+        return peerHost;
+    }
+
+    @Override
+    public InetAddress getPeerIp()
+    {
+        return socketChannel.socket().getInetAddress();
+    }
+
+    @Override
+    public int getPeerPort()
+    {
+        return socketChannel.socket().getPort();
+    }
+
 
 
     @Override public int read(ByteBuffer bb) throws Exception

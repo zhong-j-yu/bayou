@@ -5,6 +5,7 @@ import _bayou._tmp._ByteBufferUtil;
 import bayou.async.Async;
 import bayou.async.Fiber;
 import bayou.async.Promise;
+import bayou.ssl.SslConnection;
 import bayou.tcp.TcpConnection;
 import bayou.util.function.FunctionX;
 
@@ -41,7 +42,7 @@ class WebSocketChannelImpl implements WebSocketChannel
             dump.print(
                 "== connection #", ""+nbConn.getId(), " upgraded to websocket ==\r\n",
                 _ByteBufferUtil.toLatin1String(handshakeResponse),
-                connId(), " open [", nbConn.getRemoteIp().getHostAddress(), "] ==\r\n"
+                connId(), " open [", nbConn.getPeerIp().getHostAddress(), "] ==\r\n"
             );
 
         outbound = new WebSocketOutbound(this, server, nbConn, handshakeResponse);
@@ -181,14 +182,14 @@ class WebSocketChannelImpl implements WebSocketChannel
 
     String connId()
     {
-        return "== " + (nbConn.isSsl()?"wss":"ws") + " connection #" + nbConn.getId();
+        return "== " + ((nbConn instanceof SslConnection)?"wss":"ws") + " connection #" + nbConn.getId();
     }
     String fiberName()
     {
         StringBuilder sb = new StringBuilder();
-        sb.append(nbConn.isSsl()?"wss":"ws")
+        sb.append((nbConn instanceof SslConnection)?"wss":"ws")
             .append(" connection #").append(nbConn.getId())
-            .append(" [").append(nbConn.getRemoteIp().getHostAddress()).append("]");
+            .append(" [").append(nbConn.getPeerIp().getHostAddress()).append("]");
         return sb.toString();
     }
 

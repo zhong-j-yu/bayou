@@ -10,7 +10,11 @@ import java.util.concurrent.Executor;
 /**
  * Non-blocking TCP connection.
  * <p>
- *     This interface is used by {@link TcpServerX} to abstract a TCP connection.
+ *     This interface is a higher abstraction over {@link bayou.tcp.TcpChannel}.
+ *     See {@link bayou.tcp.TcpChannel2Connection} for converting a TcpChannel to TcpConnection.
+ * </p>
+ * <p>
+ *     This interface may also represent an SSL connection, see subtype {@link bayou.ssl.SslConnection}.
  * </p>
  * <h4 id=write-queue>Write Queue</h4>
  * <p>
@@ -21,7 +25,7 @@ import java.util.concurrent.Executor;
  *     the connection is temporarily un-writable, and you may call {@link #awaitWritable()} before write() again.
  * </p>
  * <p>
- *     Sentinel values {@link #TCP_FIN} and {@link #SSL_CLOSE_NOTIFY} can also be queued,
+ *     Sentinel values {@link #TCP_FIN} and {@link bayou.ssl.SslConnection#SSL_CLOSE_NOTIFY} can also be queued,
  *     each counted as 1 byte in the queue size.
  * </p>
  * <h4>Thread Safety</h4>
@@ -54,7 +58,7 @@ public interface TcpConnection
     /**
      * Get the ID of this connection.
      * <p>
-     *     The ID is for diagnosis only. It is unique within each server.
+     *     The ID is for diagnosis only. It is unique within each server/client.
      * </p>
      */
     long getId();
@@ -62,14 +66,7 @@ public interface TcpConnection
     /**
      * Get the IP address of the peer.
      */
-    InetAddress getRemoteIp();
-
-    /**
-     * Whether this is an SSL connection.
-     */
-    boolean isSsl();
-    // todo: peer certificate?  SSLSession.getPeerCertificates(). or just expose whole SSLSession?
-
+    InetAddress getPeerIp();
 
     /**
      * Sentinel value for read(), meaning nothing is available for read at the moment.
@@ -80,10 +77,6 @@ public interface TcpConnection
      * Sentinel value for read() and queueWrite(), representing TCP FIN.
      */
     ByteBuffer TCP_FIN = ByteBuffer.wrap(new byte[0]);
-    /**
-     * Sentinel value for read() and queueWrite(), representing SSL close-notify record.
-     */
-    ByteBuffer SSL_CLOSE_NOTIFY = ByteBuffer.wrap(new byte[0]);
 
     // in a previous design, there's only one abstraction "EOF". it's FIN for plain conn, CLOSE_NOTIFY for ssl conn.
     // now we have two separated, for more precise control. this is leaky abstraction, but necessary sometimes.
@@ -106,7 +99,7 @@ public interface TcpConnection
      *         You may {@link #awaitReadable(boolean)} before read again.
      *     </li>
      *     <li>
-     *         {@link #TCP_FIN} or {@link #SSL_CLOSE_NOTIFY} - TCP FIN or SSL close-notify record is received.
+     *         {@link #TCP_FIN} or {@link bayou.ssl.SslConnection#SSL_CLOSE_NOTIFY} - TCP FIN or SSL close-notify record is received.
      *         You should not call read() again.
      *     </li>
      *     <li>
@@ -145,32 +138,12 @@ public interface TcpConnection
      *     There can be only one pending awaitReadable action at any time.
      * </p>
      * <p>
-     *     How will this action complete:
-     * </p>
-     * <ul>
-     *     <li>
-     *         this action succeeds when this connection becomes readable. Next read() should see some bytes.
-     *     </li>
-     *     <li>
-     *         if parameter <code>`accepting==true`</code>, and the server is/becomes in the state
-     *         of <a href="TcpServer.html#life-cycle"><code>acceptingPaused/Stopped</code></a>,
-     *         this action fails with a message that the server is not accepting new connections.
-     *         This is useful, for example, for an HTTP server to await for a new http request on a persistent connection;
-     *         if pause/stopAccepting() is called, the pending awaitReadable actions fail, achieving the effect
-     *         of not only pause/stop accepting new connections, but new requests as well.
-     *     </li>
-     *     <li>
-     *         this action fails due to cancellation, channel being closed, server shutdown, etc.
-     *     </li>
-     * </ul>
-     * <p>
      *     Spurious wakeup is possible - this action may succeed yet the next read() sees STALL again.
      * </p>
+     * <p>
+     *     See {@link bayou.tcp.TcpChannel#awaitReadable(boolean)} for more details.
+     * </p>
      */
-//     * <p>
-//     *     The parameter <code>`accepting`</code> has no meaning if this channel is from
-//     *     a client; the <code>false</code> value is recommended in that case.
-//     * </p>
     Async<Void> awaitReadable(boolean accepting);
     // usually called if a prev read() returns STALL;
     //   can be called if not (speculating that source is not readable)
@@ -192,7 +165,7 @@ public interface TcpConnection
      *     The ByteBuffer can be very small, e.g. "\r\n", or very large, e.g. a cached huge buffer.
      * </p>
      * <p>
-     *     Sentinel values {@link #TCP_FIN} and {@link #SSL_CLOSE_NOTIFY} can also be queued,
+     *     Sentinel values {@link #TCP_FIN} and {@link bayou.ssl.SslConnection#SSL_CLOSE_NOTIFY} can also be queued,
      *     each counted as 1 byte in the queue size. If this connection is not SSL,
      *     <code>queueWrite(SSL_CLOSE_NOTIFY)</code> is a no-op.
      * </p>

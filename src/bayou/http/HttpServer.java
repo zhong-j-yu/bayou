@@ -2,16 +2,21 @@ package bayou.http;
 
 import _bayou._log._Logger;
 import _bayou._tmp._Util;
+import bayou.async.Async;
+import bayou.ssl.SslChannel2Connection;
+import bayou.tcp.TcpChannel;
+import bayou.tcp.TcpChannel2Connection;
 import bayou.tcp.TcpConnection;
-import bayou.tcp.TcpServerX;
+import bayou.tcp.TcpServer;
+import bayou.util.Result;
 
 import java.net.InetSocketAddress;
 import java.nio.channels.ServerSocketChannel;
-import java.nio.channels.SocketChannel;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.HashMap;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * Http server.
@@ -24,7 +29,7 @@ import java.util.HashMap;
  * <pre>
  *     HttpServer server = new HttpServer(handler);
  *     server.conf()
- *         .ip( 8080 )
+ *         .port( 8080 )
  *         .trafficDump( System.out::print )
  *         ;
  *     server.start();
@@ -43,13 +48,13 @@ import java.util.HashMap;
  *     If {@link #pauseAccepting()} is called, the server is in <code>acceptingPaused</code> state.
  *     New requests are not accepted.
  *     This is useful to protect the server when some resources are about to be exhausted.
- *     The server socket port is still owned by this server.
+ *     The server socket ports are still owned by this server.
  *     The server can be resumed to <code>accepting</code> state by {@link #resumeAccepting()}.
  * </p>
  * <p>
  *     After {@link #stopAccepting()}, the server is in <code>acceptingStopped</code> state.
  *     New requests are not accepted.
- *     The server socket port is freed and can be grabbed by another server.
+ *     The server socket ports are freed and can be grabbed by another server.
  *     Existing requests are still being processed.
  *     Their connections will be closed after their responses are written.
  *     Check the number of live connections by {@link #getConnectionCount()}.
@@ -76,46 +81,45 @@ public class HttpServer
     final HttpHandler handler;
     // handler must not be null. if http not supported, e.g. pure ws server, install a dummy handler: req->404;
 
+    final TcpServer tcpServer;
+
+    final HttpServerConf conf;
+
     /**
      * Create an HttpServer.
+     * <p>
+     *     Equivalent to
+     *     {@link #HttpServer(HttpServerConf, HttpHandler) new HttpServer( new HttpServerConf(), handler )}.
+     * </p>
      */
     public HttpServer(HttpHandler handler)
     {
+        this( new HttpServerConf(), handler );
+    }
+
+    /**
+     * Create an HttpServer.
+     * <p>
+     *     After the constructor call, the `conf` object can be accessed through {@link #conf()},
+     *     and it can be modified as long as the server is not started.
+     * </p>
+     */
+    public HttpServer(HttpServerConf conf, HttpHandler handler)
+    {
         _Util.require(handler!=null, "handler!=null");
         this.handler = handler;
+
+        this.conf = conf;
+
+        this.tcpServer = new TcpServer(conf.tcpConf);
+        // app can modify tcp_conf before TcpServer start.
     }
 
-    class TcpServer extends TcpServerX
+    void onConnect(TcpConnection nbConn)
     {
-        ServerSocketChannel getServerSocketChannel()
-        {
-            return super.serverSocketChannel;
-        }
-
-        @Override
-        protected void confServerSocket(ServerSocketChannel serverSocketChannel) throws Exception
-        {
-            // don't call super
-            conf.onServerSocket.accept(serverSocketChannel);
-        }
-
-        @Override
-        protected void confSocket(SocketChannel socketChannel) throws Exception
-        {
-            // don't call super
-            conf.onSocket.accept(socketChannel);
-        }
-
-        @Override
-        protected void onConnect(TcpConnection nbConn)
-        {
-            new ImplConn(HttpServer.this, nbConn);
-        }
+        new ImplConn(this, nbConn);
     }
-    final TcpServer tcpServer = new TcpServer();
 
-
-    final HttpServerConf conf = new HttpServerConf(tcpServer);
 
     /**
      * Get the {@link HttpServerConf} of this server.
@@ -172,8 +176,99 @@ public class HttpServer
         for(HttpUpgrader upgrader : upgraderMap.values())
             upgrader.init(conf); // throws
 
+        initTcpHandlers();
         tcpServer.start();  // throws
-        printStartupMessage(tcpServer.getServerSocketChannel());
+        printStartupMessage();
+    }
+
+    void initTcpHandlers() throws Exception
+    {
+        TcpServer.Conf tcpConf = conf.tcpConf;
+
+        Supplier<Long> idGenerator = new AtomicLong(1)::getAndIncrement;
+
+        TcpChannel2Connection toPlain=null;
+        if(!conf.plainPorts.isEmpty())
+        {
+            toPlain
+                = new TcpChannel2Connection(conf.readBufferSize, conf.writeBufferSize, idGenerator);
+            Consumer<TcpChannel> handlerPlain = channHandler(toPlain, null);
+            for(Integer plainPort : conf.plainPorts)
+            {
+                InetSocketAddress address = new InetSocketAddress(conf.ip, plainPort.intValue());
+                tcpConf.handlers.put(address, handlerPlain);
+            }
+        }
+
+        if(!conf.sslPorts.isEmpty())
+        {
+            SslChannel2Connection toSsl =
+                new SslChannel2Connection(false, conf.sslContext, conf.sslEngineConf, idGenerator);
+            Consumer<TcpChannel> handlerSsl=null;
+            Consumer<TcpChannel> handlerMixed=null;
+            for(Integer sslPort : conf.sslPorts)
+            {
+                InetSocketAddress address = new InetSocketAddress(conf.ip, sslPort.intValue());
+                if(!tcpConf.handlers.containsKey(address))
+                {
+                    if(handlerSsl==null)
+                        handlerSsl = channHandler(null, toSsl);
+                    tcpConf.handlers.put(address, handlerSsl);
+                }
+                else // same port for plain/ssl
+                {
+                    assert toPlain!=null;
+                    if(handlerMixed==null)
+                        handlerMixed = channHandler(toPlain, toSsl);
+                    tcpConf.handlers.put(address, handlerMixed);
+                }
+            }
+        }
+
+        if(tcpConf.handlers.isEmpty())
+            throw new Exception("no server ports are specified");
+    }
+
+    Consumer<TcpChannel> channHandler(TcpChannel2Connection toPlain, SslChannel2Connection toSsl)
+    {
+        if(toSsl==null) // plain only
+            return chann->
+            {
+                TcpConnection conn = toPlain.convert(chann);
+                onConnect(conn);
+            };
+
+        Consumer<Result<TcpConnection>> onConnResult = result ->
+        {
+            TcpConnection nbConn = result.getValue();
+            if (nbConn != null)
+            {
+                onConnect(nbConn);
+            }
+            else
+            {
+                Exception ex = result.getException();
+                assert ex != null;
+                logErrorOrDebug(ex); // e.g. ssl handshake error
+            }
+        };
+
+        return chann->
+        {
+            Async<TcpConnection> asyncConn;
+            if(toPlain==null)
+                asyncConn = toSsl.convert(chann).covary();
+            else
+                asyncConn = toSsl.convert(chann, toPlain);
+
+            asyncConn = asyncConn.timeout(conf.sslHandshakeTimeout);
+
+            Result<TcpConnection> result = asyncConn.pollResult();
+            if(result!=null) // often the case for plain conn
+                onConnResult.accept(result);
+            else
+                asyncConn.onCompletion(onConnResult);
+        };
     }
 
     void initHotHandler()
@@ -192,6 +287,16 @@ public class HttpServer
         }
     }
 
+    /**
+     * Get server sockets.
+     * <p>
+     *     Returns an empty set if the server is not started, or has been stopped.
+     * </p>
+     */
+    public Set<ServerSocketChannel> getServerSockets()
+    {
+        return tcpServer.getServerSockets();
+    }
 
     /**
      * Get the number of connections.
@@ -255,28 +360,45 @@ public class HttpServer
         // message?
     }
 
-    void printStartupMessage(ServerSocketChannel serverSocketChannel)
+    void printStartupMessage()
     {
-        // confServerSocketIp can be null, then InetAddress.anyLocalAddress() is used.
-        // unfortunately we can't call that method. get it from server socket
-        InetSocketAddress ip_port = (InetSocketAddress)serverSocketChannel.socket().getLocalSocketAddress();
-        String ip = ip_port.getAddress().getHostAddress(); // numeric ip, no other stuff. // e.g. 0:0:0:0:0:0:0:0
-        int port = ip_port.getPort();
-
-        String ssl;
-        if(!conf.get_plainEnabled())
-            ssl = "SSL only";  // plain disabled
-        else if(conf.get_sslEnabled())
-            ssl = "SSL+plain";
-        else
-            ssl = "no SSL"; // plain only
-
         ArrayList<String> protocols = new ArrayList<>();
         protocols.add("http");
         protocols.addAll(upgraderMap.keySet());
 
-        System.out.printf("%nBayou HttpServer%n  port=%d, IP=%s, protocols=%s, %s %nStarted %s %n%n",
-            port, ip , protocols, ssl, new Date());
+        String ip = conf.ip.getHostAddress(); // numeric ip, no other stuff. // e.g. 0:0:0:0:0:0:0:0
+
+        System.out.printf("%nBayou HttpServer, protocols=%s, IP=%s %n", protocols, ip);
+
+        TreeSet<Integer> ports = new TreeSet<>();
+        for(ServerSocketChannel chann : tcpServer.getServerSockets())
+        {
+            Integer port = chann.socket().getLocalPort();
+            ports.add(port);
+        }
+        for(Integer port : ports)
+        {
+            String type = portType(port);
+            if(type==null) // auto-port from 0
+                type = portType(0);
+            assert type!=null;
+            System.out.printf(" port %s\t-  %s %n", port, type);
+        }
+
+        System.out.printf("Started on %s %n%n", new Date());
+    }
+    String portType(Integer port)
+    {
+        boolean plain = conf.plainPorts.contains(port);
+        boolean ssl = conf.sslPorts.contains(port);
+        if(ssl&&plain)
+            return "SSL + plain";
+        else if(plain)
+            return "plain";
+        else if(ssl)
+            return "SSL";
+        else
+            return null;
     }
 
     static final _Logger logger = _Logger.of(HttpServer.class);

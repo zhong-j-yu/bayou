@@ -7,6 +7,7 @@ import bayou.async.AsyncIterator;
 import bayou.async.Fiber;
 import bayou.async.Promise;
 import bayou.mime.Headers;
+import bayou.ssl.SslConnection;
 import bayou.tcp.TcpConnection;
 import bayou.util.Result;
 
@@ -34,7 +35,7 @@ class ImplConn
         this.dump = conf.trafficDumpWrapper;
 
         if(dump!=null)
-            dump.print(connId(), " open [", nbConn.getRemoteIp().getHostAddress(), "] ==\r\n");
+            dump.print(connId(), " open [", nbConn.getPeerIp().getHostAddress(), "] ==\r\n");
 
         startFiber();
     }
@@ -539,15 +540,15 @@ class ImplConn
 
     String connId()
     {
-        return "== "+(nbConn.isSsl()?"https":"http")+" connection #"+nbConn.getId();
+        return "== "+((nbConn instanceof SslConnection)?"https":"http")+" connection #"+nbConn.getId();
     }
 
     String fiberName(HttpRequest request)
     {
-        InetAddress ip = request!=null? request.ip() : nbConn.getRemoteIp();
+        InetAddress ip = request!=null? request.ip() : nbConn.getPeerIp();
 
         StringBuilder sb = new StringBuilder();
-        sb.append(nbConn.isSsl()?"https":"http")
+        sb.append((nbConn instanceof SslConnection)?"https":"http")
             .append(" connection #").append(nbConn.getId())
             .append(" [").append(ip.getHostAddress()).append("]");
         if(request!=null)

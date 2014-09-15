@@ -5,6 +5,7 @@ import _bayou._tmp._HexUtil;
 import _bayou._tmp._Util;
 import bayou.async.Async;
 import bayou.async.Promise;
+import bayou.ssl.SslConnection;
 import bayou.tcp.TcpConnection;
 import bayou.util.End;
 import bayou.util.Result;
@@ -140,7 +141,7 @@ class WebSocketInbound
             return false;
         }
 
-        if(bb== TcpConnection.TCP_FIN || bb== TcpConnection.SSL_CLOSE_NOTIFY)
+        if(bb== TcpConnection.TCP_FIN || bb== SslConnection.SSL_CLOSE_NOTIFY)
         {
             // tcp FIN not treated as an immediate error, staged message data can still be read. just set the tcpFin flag.
             // if app protocol has built-in end-of-conversation convention, it doesn't need close-frame.

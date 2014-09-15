@@ -5,7 +5,9 @@ import bayou.mime.HeaderMap;
 import bayou.mime.Headers;
 
 import java.net.InetAddress;
+import java.security.cert.X509Certificate;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 
 // app cannot temper with this req, which is important.
@@ -15,6 +17,7 @@ class ImplHttpRequest implements HttpRequest
 {
     InetAddress ip;
     boolean isHttps;
+    List<X509Certificate> certs = Collections.emptyList();
     String method;
     String uri;
     final HeaderMap headers = new HeaderMap();
@@ -44,6 +47,12 @@ class ImplHttpRequest implements HttpRequest
     public boolean isHttps()
     {
         return isHttps;
+    }
+
+    @Override
+    public List<X509Certificate> certs()
+    {
+        return certs;
     }
 
     @Override

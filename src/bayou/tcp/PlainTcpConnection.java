@@ -2,7 +2,9 @@ package bayou.tcp;
 
 import _bayou._tmp._ByteBufferPool;
 import _bayou._tmp._ByteBufferUtil;
+import _bayou._tmp._Tcp;
 import bayou.async.Async;
+import bayou.ssl.SslConnection;
 
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
@@ -13,15 +15,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 class PlainTcpConnection implements TcpConnection
 {
-    static void start(TcpServerX server, TcpChannel channel)
-    {
-        start(server, channel, null);
-    }
-    static void start(TcpServerX server, TcpChannel channel, ByteBuffer initBuffer)
-    {
-        server.onConnect( new PlainTcpConnection(server, channel, initBuffer) );
-    }
-
     _ByteBufferPool readBufferPool;
     _ByteBufferPool writeBufferPool;
     TcpChannel channel;
@@ -29,24 +22,18 @@ class PlainTcpConnection implements TcpConnection
 
     ByteBuffer unread;
 
-    PlainTcpConnection(TcpServerX server, TcpChannel channel, ByteBuffer initBuffer)
+    PlainTcpConnection(TcpChannel channel, long id,
+                       _ByteBufferPool readBufferPool, _ByteBufferPool writeBufferPool)
     {
         if(trace)trace("cstor()");
         this.channel = channel;
-        this.id = server.idSeq.incrementAndGet();
 
-        this.readBufferPool = server.plainReadBufferPool;
-        this.writeBufferPool = server.plainWriteBufferPool;
+        this.id = id;
 
-        this.cbM = server.confWriteSize;
+        this.readBufferPool = readBufferPool;
+        this.writeBufferPool = writeBufferPool;
 
-        if(initBuffer!=null) // from SslDetector, from server.plainReadBufferPool
-        {
-            if(trace)trace("with initBuffer");
-            assert initBuffer.hasRemaining();
-            unread = _ByteBufferUtil.copyOf(initBuffer);
-            server.plainReadBufferPool.checkIn(initBuffer);
-        }
+        this.cbM = writeBufferPool.getBufferCapacity();
     }
 
     @Override
@@ -55,9 +42,7 @@ class PlainTcpConnection implements TcpConnection
         return id;
     }
 
-    @Override public InetAddress getRemoteIp(){ return channel.getRemoteIp(); }
-
-    @Override public boolean isSsl(){ return false; }
+    @Override public InetAddress getPeerIp(){ return channel.getPeerIp(); }
 
     // close() must be called on both read and write flow.
     Async<Void> closeAction; // updated only in close(), which is on both flows; so both flows can read it safely.
@@ -73,7 +58,7 @@ class PlainTcpConnection implements TcpConnection
 
         freeWriteBuffers();
 
-        closeAction = TcpUtil.close(channel, drainTimeout, readBufferPool);
+        closeAction = _Tcp.close(channel, drainTimeout, readBufferPool);
         channel = null;
         return closeAction;
     }
@@ -180,7 +165,7 @@ class PlainTcpConnection implements TcpConnection
 
     @Override public long queueWrite(ByteBuffer bb)
     {
-        if(bb== TcpConnection.SSL_CLOSE_NOTIFY)
+        if(bb== SslConnection.SSL_CLOSE_NOTIFY)
             return wr();
         // just ignore CLOSE_NOTIFY. the desired effect is that
         //    queueWrite(SSL_CLOSE_NOTIFY)

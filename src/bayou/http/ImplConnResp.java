@@ -6,6 +6,7 @@ import bayou.async.Async;
 import bayou.bytes.ByteSource;
 import bayou.mime.HeaderMap;
 import bayou.mime.Headers;
+import bayou.ssl.SslConnection;
 import bayou.tcp.TcpConnection;
 import bayou.util.End;
 import bayou.util.Result;
@@ -307,7 +308,7 @@ class ImplConnResp
         // must append CLOSE_NOTIFY and FIN if this is the last response
         if(isLast)
         {
-            nbConn.queueWrite(TcpConnection.SSL_CLOSE_NOTIFY);
+            nbConn.queueWrite(SslConnection.SSL_CLOSE_NOTIFY);
             nbConn.queueWrite(TcpConnection.TCP_FIN);
         }
 

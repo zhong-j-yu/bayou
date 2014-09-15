@@ -3,6 +3,7 @@ package _bayou._tmp;
 import _bayou._log._Logger;
 import bayou.async.Async;
 import bayou.util.End;
+import bayou.util.function.BiFunctionX;
 
 import java.io.IOException;
 import java.io.PrintWriter;
@@ -13,8 +14,10 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -179,5 +182,15 @@ public class _Util
             }
         };
         Files.walkFileTree(dir, EnumSet.noneOf(FileVisitOption.class), 1024, visitor);
+    }
+
+    public static RuntimeException sneakyThrow(Throwable t)
+    {
+        throw _Util.<RuntimeException>sneakyThrow0(t);
+    }
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> T sneakyThrow0(Throwable t) throws T
+    {
+        throw (T)t;
     }
 }

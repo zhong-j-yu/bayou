@@ -1,5 +1,6 @@
 package bayou.http;
 
+import _bayou._tmp._Array2ReadOnlyList;
 import _bayou._tmp._HttpUtil;
 import _bayou._tmp._JobTimeout;
 import _bayou._tmp._StrUtil;
@@ -7,11 +8,18 @@ import bayou.async.Async;
 import bayou.mime.ContentType;
 import bayou.mime.HeaderMap;
 import bayou.mime.Headers;
+import bayou.ssl.SslConnection;
 import bayou.tcp.TcpConnection;
 
+import javax.net.ssl.SSLPeerUnverifiedException;
+import javax.net.ssl.SSLSession;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.security.cert.Certificate;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 import static bayou.http.ImplConn.Goto;
 
@@ -96,7 +104,7 @@ class ImplConnReq
             return Goto.NA;
         }
 
-        if(bb== TcpConnection.TCP_FIN || bb== TcpConnection.SSL_CLOSE_NOTIFY) // EOF before head is complete
+        if(bb== TcpConnection.TCP_FIN || bb== SslConnection.SSL_CLOSE_NOTIFY) // EOF before head is complete
         {
             // we don't care if FIN is received before CLOSE_NOTIFY on an SSL connection
             if(request==null)  // no bytes at all. normal condition.
@@ -112,8 +120,9 @@ class ImplConnReq
             int fieldMax = hConn.conf.requestHeadFieldMaxLength;
             int totalMax = hConn.conf.requestHeadTotalMaxLength;
             request = new ImplHttpRequest();
-            request.ip = hConn.nbConn.getRemoteIp();
-            request.isHttps = hConn.nbConn.isSsl();
+            request.ip = hConn.nbConn.getPeerIp();
+            request.isHttps = hConn.nbConn instanceof SslConnection;
+            request.certs = certs();
             parser = new ImplReqHeadParser(fieldMax, totalMax, hConn.conf.supportedMethods, request);
 
             if(hConn.dump!=null)
@@ -349,4 +358,28 @@ class ImplConnReq
         else
             return null;
     }
+
+    List<X509Certificate> certs()
+    {
+        if(!(hConn.nbConn instanceof SslConnection))
+            return Collections.emptyList();
+
+        SSLSession session = ((SslConnection)hConn.nbConn).getSslSession();
+
+        Certificate[] array;
+        try
+        {
+            array = session.getPeerCertificates();
+        }
+        catch (SSLPeerUnverifiedException e)
+        {
+            return Collections.emptyList();
+        }
+        for(Certificate cert : array)
+            if(!(cert instanceof X509Certificate))
+                return Collections.emptyList();
+
+        return new _Array2ReadOnlyList<>(array);  // up cast
+    }
+
 }

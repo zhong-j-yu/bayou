@@ -9,10 +9,11 @@ import java.util.concurrent.Executor;
 /**
  * Non-blocking TCP channel.
  * <p>
- *     This interface is used by {@link TcpServer} to abstract a TCP channel.
+ *     This interface is used by {@link TcpServer} and {@link bayou.tcp.TcpClient} to abstract a TCP channel.
  * </p>
  * <p>
- *     (You may want to use {@link TcpServerX} with {@link TcpConnection} instead which have more features.)
+ *     You may want to use {@link bayou.tcp.TcpConnection} or {@link bayou.ssl.SslConnection}
+ *     instead that wraps over a TcpChannel.
  * </p>
  * <p>
  *     This class is thread-safe, all methods can be called on any thread at any time.
@@ -22,9 +23,27 @@ import java.util.concurrent.Executor;
 public interface TcpChannel
 {
     /**
+     * Get the host name of the peer; or null if unknown.
+     * <p>
+     *     If the host name is unknown, this method does not lookup the host name from the peer IP.
+     * </p>
+     * <p>
+     *     For example, method {@link TcpClient#connect(String, java.net.InetAddress, int)
+     *     TcpClient.connect(peerHost, ip, port)}
+     *     provides peerHost for the resulting TcpChannel.
+     * </p>
+     */
+    String getPeerHost();
+
+    /**
      * Get the IP address of the peer.
      */
-    InetAddress getRemoteIp();
+    InetAddress getPeerIp();
+
+    /**
+     * Get the TCP port of the peer.
+     */
+    int getPeerPort();
 
     /**
      * Read some bytes into the ByteBuffer.
@@ -58,6 +77,9 @@ public interface TcpChannel
      *         this action succeeds when this channel becomes readable. Next read() should see some bytes.
      *     </li>
      *     <li>
+     *         this action fails due to cancellation, channel being closed, server shutdown, etc.
+     *     </li>
+     *     <li>
      *         if parameter <code>`accepting==true`</code>, and the server is/becomes in the state
      *         of <a href="TcpServer.html#life-cycle"><code>acceptingPaused/Stopped</code></a>,
      *         this action fails with a message that the server is not accepting new connections.
@@ -65,15 +87,13 @@ public interface TcpChannel
      *         if pause/stopAccepting() is called, the pending awaitReadable actions fail, achieving the effect
      *         of not only pause/stop accepting new connections, but new requests as well.
      *     </li>
-     *     <li>
-     *         this action fails due to cancellation, channel being closed, server shutdown, etc.
-     *     </li>
      * </ul>
+     * <p>
+     *     The parameter <code>`accepting`</code> has no meaning if this is a client-side channel,
+     *     for example, this channel is the result of {@link TcpClient#connect(String, java.net.InetAddress, int)}.
+     *     In that case, the <code>false</code> value is recommended for `accepting`.
+     * </p>
      */
-//     * <p>
-//     *     The parameter <code>`accepting`</code> has no meaning if this channel is from
-//     *     a client; the <code>false</code> value is recommended in that case.
-//     * </p>
     Async<Void> awaitReadable(boolean accepting);
     // probably no spurious wakeup - if readable, next read() should return something.
     //    it's better for app to prepare for the possibility of spurious wakeup

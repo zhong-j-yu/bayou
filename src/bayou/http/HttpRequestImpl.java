@@ -6,7 +6,9 @@ import bayou.mime.HeaderMap;
 import bayou.mime.Headers;
 
 import java.net.InetAddress;
+import java.security.cert.X509Certificate;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -21,6 +23,7 @@ public class HttpRequestImpl implements HttpRequest
 {
     InetAddress ip;
     boolean isHttps;
+    List<X509Certificate> certs = Collections.emptyList();
     String method;
     String uri;
     String httpVersion;
@@ -136,6 +139,7 @@ public class HttpRequestImpl implements HttpRequest
 
         this.ip = originRequest.ip();
         this.isHttps = originRequest.isHttps();
+        this.certs = originRequest.certs();
         this.headers.putAll(originRequest.headers());  // make a copy.
 
     }
@@ -162,6 +166,16 @@ public class HttpRequestImpl implements HttpRequest
     public boolean isHttps()
     {
         return isHttps;
+    }
+
+    /**
+     * Certificates of the client. See {@link javax.net.ssl.SSLSession#getPeerCertificates()}.
+     */
+    // we don't have a setter for certs yet.
+    @Override
+    public List<X509Certificate> certs()
+    {
+        return certs;
     }
 
     /**

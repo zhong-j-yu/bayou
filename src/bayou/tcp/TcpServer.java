@@ -4,6 +4,7 @@ package bayou.tcp;
 import _bayou._log._Logger;
 import _bayou._tmp._Tcp;
 import _bayou._tmp._Util;
+import bayou.util.function.ConsumerX;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -17,22 +18,14 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Phaser;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 /**
  * Non-blocking TCP server.
  * <p>
- *     A subclass overrides {@link #onAccept(TcpChannel)} to handle each new connection.
- * </p>
- * <p>
- *     (You may want to use {@link TcpServerX} with {@link TcpConnection} instead which have more features.)
- * </p>
- * <h4>Configuration</h4>
- * <p>
- *     Configure the server by setting <code>confXxx</code> variables, for example, {@link #confServerPort},
- *     before starting the server.
- * </p>
- * <p>
- *     See also {@link #confServerSocket(ServerSocketChannel)} and {@link #confSocket(SocketChannel)} methods.
+ *     A TcpServer can be bound to multiple addresses;
+ *     each address has a corresponding channel handler.
+ *     See {@link Conf#handlers}.
  * </p>
  * <h4 id=life-cycle>Life Cycle</h4>
  * <p>
@@ -46,13 +39,13 @@ import java.util.concurrent.atomic.AtomicInteger;
  *     If {@link #pauseAccepting()} is called, the server is in <code>acceptingPaused</code> state.
  *     New connections are not accepted.
  *     This is useful to protect the server when some resources are about to be exhausted.
- *     The server socket port is still owned by this server.
+ *     The server socket ports are still owned by this server.
  *     The server can be resumed to <code>accepting</code> state by {@link #resumeAccepting()}.
  * </p>
  * <p>
  *     After {@link #stopAccepting()}, the server is in <code>acceptingStopped</code> state.
  *     New connections are not accepted.
- *     The server socket port is freed and can be grabbed by another server.
+ *     The server socket ports are freed and can be grabbed by another server.
  *     Existing connections are still functional until app closes them.
  *     Check the number of live connections by {@link #getConnectionCount()}.
  * </p>
@@ -65,175 +58,168 @@ import java.util.concurrent.atomic.AtomicInteger;
  * </p>
  */
 
-// abstract class/method is not a good design choice. too late to fix it now.
-// no big deal, since this class is rarely used directly by app.
-
-abstract public class TcpServer
+public class TcpServer
 {
     static final _Logger logger = _Logger.of(TcpServer.class);
 
-    /**
-     * Handle an accepted channel.
-     * <p>
-     *     This method is invoked when a new incoming connection is accepted;
-     *     subclass overrides this method to handle it.
-     * </p>
-     * <p>
-     *     This method must not block; must not throw Exception.
-     * </p>
-     */
-    abstract protected void onAccept(TcpChannel channel);
-
-
-
-    // conf -------------------------------------------------------------------------------
 
 
     /**
-     * IP address the server socket binds to.
-     * <p><code>
-     *     default: the wildcard address
-     * </code></p>
-     * <p>See {@link InetSocketAddress}.</p>
+     * Configuration for TcpServer.
      */
-    public InetAddress confServerIp = new InetSocketAddress(2000).getAddress();
-    // null is ok, meaning the wildcard address. however it's better non-null.
-
-    /**
-     * Port number the server socket binds to.
-     * <p><code>
-     *     default: 2048
-     * </code></p>
-     */
-    public int confServerPort = 2048; // not a well-known or registered port.
-    // 0 is ok, meaning an automatic port
-
-    /**
-     * Ids of selectors for this server.
-     * <p><code>
-     *     default: [0, 1, ... N-1] where N is the number of processors
-     * </code></p>
-     * <p>
-     *     Conceptually there are infinitely number of selectors, each associated with a dedicated thread.
-     *     A server may choose to use any one or several selectors.
-     *     Different servers/clients can share same selectors or use different selectors.
-     * </p>
-     */
-    public int[] confSelectorIds = defaultSelectorIds();
-
-    static int[] defaultSelectorIds()
+    public static class Conf
     {
-        int N = Runtime.getRuntime().availableProcessors();
-        int[] ids = new int[N];
-        for(int i=0; i<N; i++)
-            ids[i] = i;
-        return ids;
-    }
+        /**
+         * Create a Conf with default values
+         */
+        public Conf()
+        {
 
-    /**
-     * Server socket backlog.
-     * <p><code>
-     *     default: 50
-     * </code></p>
-     * <p>See {@link ServerSocket#bind(SocketAddress endpoint, int backlog)}.</p>
-     */
-    public int confServerSocketBacklog = 50;
+        }
 
-    /**
-     * Max number of connections. Must be positive.
-     * <p><code>
-     *     default: {@link Integer#MAX_VALUE}
-     * </code></p>
-     * <p>
-     *     If this limit is reached, no new incoming connections are accepted,
-     *     until some existing connections are closed.
-     * </p>
-     */
-    public int confMaxConnections = Integer.MAX_VALUE;
+        /**
+         * Handlers for each server address.
+         * <p><code>
+         *     default: empty
+         * </code></p>
+         * <p>
+         *     A channel handler is invoked whenever a new incoming connection is accepted on the address;
+         *     the handler must not block, must not throw Exception.
+         * </p>
+         * <p>
+         *     Example:
+         * </p>
+         * <pre>
+         *     conf.handlers.put( new InetSocketAddress(port), channel-&gt;{...} );
+         * </pre>
+         */
+        public Map<InetSocketAddress, Consumer<TcpChannel>> handlers = new HashMap<>();
 
-    /**
-     * Max number of connections per IP. Must be positive.
-     * <p><code>
-     *     default: {@link Integer#MAX_VALUE}
-     * </code></p>
-     * <p>
-     *     For any IP, if this limit is reached, no new incoming connections are accepted,
-     *     until some existing connections are closed.
-     * </p>
-     */
-    public int confMaxConnectionsPerIp = Integer.MAX_VALUE;
-    // max conn per ip is a defence against abuse. it should be set quite high.
-    // finer control, like max conn per specific ips, is not provided here.
+        /**
+         * Ids of selectors for this server.
+         * <p><code>
+         *     default: [0, 1, ... N-1] where N is the number of processors
+         * </code></p>
+         * <p>
+         *     Conceptually there are infinite number of selectors, each associated with a dedicated thread.
+         *     A server may choose to use any one or several selectors.
+         *     Different servers/clients can share same selectors or use different selectors.
+         * </p>
+         */
+        public int[] selectorIds = defaultSelectorIds();
 
-    /**
-     * Configure the server socket.
-     * <p>
-     *     This method is invoked before
-     *     {@link ServerSocket#bind(SocketAddress endpoint, int backlog) bind()}.
-     * </p>
-     * <p>
-     *     The default implementation enables {@link ServerSocket#setReuseAddress(boolean) SO_REUSEADDR}
-     *     if the OS is not Windows.
-     * </p>
-     * <p>
-     *     Subclass can override this method to set more options, e.g.
-     *     {@link ServerSocket#setReceiveBufferSize(int)}.
-     *     The serverSocketChannel is in non-blocking model; it must not be changed to blocking mode.
-     * </p>
-     */
-    protected void confServerSocket(ServerSocketChannel serverSocketChannel) throws Exception
-    {
-        if(!_Util.isWindows())
-            serverSocketChannel.socket().setReuseAddress(true);
-        // if we enable SO_REUSEADDR on windows, two servers can bind to the same port!
+        static int[] defaultSelectorIds()
+        {
+            int N = Runtime.getRuntime().availableProcessors();
+            int[] ids = new int[N];
+            for(int i=0; i<N; i++)
+                ids[i] = i;
+            return ids;
+        }
 
-    }
+        /**
+         * Server socket backlog.
+         * <p><code>
+         *     default: 50
+         * </code></p>
+         * <p>See {@link ServerSocket#bind(SocketAddress endpoint, int backlog)}.</p>
+         */
+        public int serverSocketBacklog = 50;
+
+        /**
+         * Max number of connections. Must be positive.
+         * <p><code>
+         *     default: {@link Integer#MAX_VALUE}
+         * </code></p>
+         * <p>
+         *     If this limit is reached, no new incoming connections are accepted,
+         *     until some existing connections are closed.
+         * </p>
+         */
+        public int maxConnections = Integer.MAX_VALUE;
+
+        /**
+         * Max number of connections per IP. Must be positive.
+         * <p><code>
+         *     default: {@link Integer#MAX_VALUE}
+         * </code></p>
+         * <p>
+         *     For any IP, if this limit is reached, no new incoming connections are accepted,
+         *     until some existing connections are closed.
+         * </p>
+         */
+        public int maxConnectionsPerIp = Integer.MAX_VALUE;
+        // max conn per ip is a defence against abuse. it should be set quite high.
+        // finer control, like max conn per specific ips, is not provided here.
+
+        /**
+         * Action to configure the server socket.
+         * <p><code>
+         *     default action:
+         *     enable {@link ServerSocket#setReuseAddress(boolean) SO_REUSEADDR} if the OS is not Windows.
+         * </code></p>
+         * <p>
+         *     App may want to configure more options on the server socket, e.g.
+         *     {@link ServerSocket#setReceiveBufferSize(int)}.
+         *     The ServerSocketChannel is in non-blocking model; it must not be changed to blocking mode.
+         * </p>
+         * <p>
+         *     The action will be invoked before
+         *     {@link ServerSocket#bind(SocketAddress endpoint, int backlog) ServerSocket.bind()}.
+         * </p>
+         */
+        public ConsumerX<ServerSocketChannel> serverSocketConf = serverSocketChannel ->
+        {
+            if(!_Util.isWindows())
+                serverSocketChannel.socket().setReuseAddress(true);
+            // if we enable SO_REUSEADDR on windows, two servers can bind to the same port!
+        };
+
+        // the receive buffer can be as large as the BDP - Bandwidth Delay Product, which may >64KB
+        // leave the setting to subclass
+        // in a request-response protocol, receive buffer only needs to hold one whole typical request;
+        // no point to receive more data before we respond.
+        // for http, a request head isn't too big; default buffer size should be fine.
+        // if request has a body, default size can under utilize the network - but only for that request
+        // from that client. for some app, we may want BDP to fully utilize network for such requests.
 
 
-    // the receive buffer can be as large as the BDP - Bandwidth Delay Product, which may >64KB
-    // leave the setting to subclass
-    // in a request-response protocol, receive buffer only needs to hold one whole typical request;
-    // no point to receive more data before we respond.
-    // for http, a request head isn't too big; default buffer size should be fine.
-    // if request has a body, default size can under utilize the network - but only for that request
-    // from that client. for some app, we may want BDP to fully utilize network for such requests.
 
 
-    /**
-     * Configure each newly accepted socket.
-     * <p>
-     *     The default implementation enables {@link Socket#setTcpNoDelay(boolean) TCP_NODELAY}.
-     * </p>
-     * <p>
-     *     Subclass can override this method to set more options.
-     *     The socketChannel is in non-blocking model; it must not be changed to blocking mode.
-     * </p>
-     */
-    // note: SO_LINGER on non-blocking socket is not well defined. enable it only if you are sure
-    //     it's ok on your tcp stack.
-    protected void confSocket(SocketChannel socketChannel) throws Exception
-    {
-        // Nagle's algorithm is only a defense against careless applications.
-        // A well written application can only be hurt by it. It should've never existed.
-        socketChannel.socket().setTcpNoDelay(true);
-        // setting socket option requires a system call; it can take thousands of nanos. no big deal?
-        // we may consider add get/setOption() to NbChannel/Connection,
-        // more flexibility for user to set option whenever desired.
+        /**
+         * Action to configure each newly accepted socket.
+         * <p><code>
+         *     default action:
+         *     enable {@link Socket#setTcpNoDelay(boolean) TCP_NODELAY}
+         * </code></p>
+         * <p>
+         *     App may want to configure more options on each socket.
+         *     The SocketChannel is in non-blocking model; it must not be changed to blocking mode.
+         * </p>
+         */
+        // note: SO_LINGER on non-blocking socket is not well defined. enable it only if you are sure
+        //     it's ok on your tcp stack.
+        public ConsumerX<SocketChannel> socketConf = socketChannel ->
+        {
+            // Nagle's algorithm is only a defense against careless applications.
+            // A well written application can only be hurt by it. It should've never existed.
+            socketChannel.socket().setTcpNoDelay(true);
+            // setting socket option requires a system call; it can take thousands of nanos. no big deal?
+            // we may consider add get/setOption() to NbChannel/Connection,
+            // more flexibility for user to set option whenever desired.
+        };
+
     }
 
     // ------------------------------------------------------------------------------------
 
+    final Conf conf;
+
     final Object lock = new Object();
 
-    /**
-     * The server socket channel.
-     */
-    protected ServerSocketChannel serverSocketChannel;
-    // we expose it in confServerSocket() anyway, so make it protected.
-    // subclass may read info from it, e.g. the actual ip/port after bind()
+    LinkedHashMap<ServerSocketChannel, Consumer<TcpChannel>> handlers;
 
     ServerAgent[] serverAgentList; // one per selector thread
-    Phaser phaser;
     enum ServerState{ err, init, accepting, acceptingPaused, acceptingStopped, allStopped }
     volatile ServerState state;
     ConcurrentHashMap<InetAddress,AtomicInteger> ip2Channs;
@@ -241,8 +227,10 @@ abstract public class TcpServer
     /**
      * Create a TcpServer. The server is in <code>init</code> state.
      */
-    protected TcpServer()
+    public TcpServer(Conf conf)
     {
+        this.conf = conf;
+
         synchronized (lock)
         {
             state = ServerState.init;
@@ -267,40 +255,92 @@ abstract public class TcpServer
             if(state !=ServerState.init)
                 throw new IllegalStateException(state.toString());
 
-            state =ServerState.err; // will be reset later if nothing goes wrong
+            ArrayDeque<Runnable> rollbacks = new ArrayDeque<>();
+            try
             {
-                final int NS = confSelectorIds.length;
-                _Tcp.validate_confSelectorIds(confSelectorIds);
+                final int NS = conf.selectorIds.length;
+                _Tcp.validate_confSelectorIds(conf.selectorIds);
 
-                _Util.require(confMaxConnections>0, "confMaxConnections>0");
-                int maxConnPerAgent = confMaxConnections/NS;
-                if(maxConnPerAgent*NS!=confMaxConnections)
+                _Util.require(conf.maxConnections >0, "confMaxConnections>0");
+                int maxConnPerAgent = conf.maxConnections /NS;
+                if(maxConnPerAgent*NS!=conf.maxConnections)
                     ++maxConnPerAgent;
                 // maxConnPerAgent>0
 
-                _Util.require(confMaxConnectionsPerIp>0, "confMaxConnectionsPerIp>0");
-                if(confMaxConnectionsPerIp<Integer.MAX_VALUE)
+                _Util.require(conf.maxConnectionsPerIp >0, "confMaxConnectionsPerIp>0");
+                if(conf.maxConnectionsPerIp <Integer.MAX_VALUE)
                     ip2Channs = new ConcurrentHashMap<>();
 
-                InetSocketAddress serverAddress = new InetSocketAddress(confServerIp, confServerPort);
-                serverSocketChannel = ServerSocketChannel.open();
-                serverSocketChannel.configureBlocking(false);
-                confServerSocket(serverSocketChannel);
-                serverSocketChannel.socket().bind(serverAddress, confServerSocketBacklog); // throws
+                handlers = new LinkedHashMap<>();
+                for(Map.Entry<InetSocketAddress, Consumer<TcpChannel>> entry : conf.handlers.entrySet())
+                {
+                    InetSocketAddress serverAddress = entry.getKey();
+                    Consumer<TcpChannel> handler = entry.getValue();
 
-                phaser = new Phaser(NS+1); // for server to sync state with selectors
+                    ServerSocketChannel serverSocketChannel = ServerSocketChannel.open();
+                    rollbacks.addFirst(() -> _Util.closeNoThrow(serverSocketChannel, logger));
+
+                    serverSocketChannel.configureBlocking(false);
+                    conf.serverSocketConf.accept(serverSocketChannel);
+                    serverSocketChannel.socket().bind(serverAddress, conf.serverSocketBacklog); // may fail
+
+                    handlers.put(serverSocketChannel, handler);
+                }
 
                 serverAgentList = new ServerAgent[NS];
                 for(int i=0; i< NS; i++)
                 {
-                    SelectorThread selectorThread = SelectorThread.acquire(confSelectorIds[i]); // throws, unlikely tho
+                    SelectorThread selectorThread = SelectorThread.acquire(conf.selectorIds[i]); // throws, unlikely tho
+                    rollbacks.addFirst(() -> SelectorThread.release(selectorThread));
                     serverAgentList[i] = new ServerAgent(i, this, selectorThread, maxConnPerAgent);
                 }
             }
-            state =ServerState.acceptingPaused;
+            catch(Exception e)
+            {
+                state =ServerState.err;
 
-            resumeAccepting();
+                rollbacks.forEach( Runnable::run );
+                serverAgentList=null;
+                handlers=null;
+                ip2Channs = null;
+
+                throw e;
+            }
+
+            for(ServerAgent sa : serverAgentList)
+                sa.selectorThread.execute( sa::onInit );
+
+            ServerAgent sa0 = serverAgentList[0];
+            sa0.selectorThread.execute( sa0::onBecomeAcceptor0 );
+            // onBecomeAcceptor0 must be sent AFTER all threads received onInit
+
+            state=ServerState.accepting;
+
+        } // synchronized(lock)
+    }
+
+    // note that our use of `lock` guarantees that each selector thread receives these events in good order
+    //     onInit -> [onBecomeAccepter0] ->
+    //     *( onPauseAccepting -> onResumeAccepting -> )
+    //     onStop -> onKill
+    // if we don't enforce the order here, the selector thread then needs to handle out of order events.
+
+
+    /**
+     * Get server sockets.
+     * <p>
+     *     Returns an empty set if the server is not started, or has been stopped.
+     * </p>
+     */
+    public Set<ServerSocketChannel> getServerSockets()
+    {
+        HashSet<ServerSocketChannel> set = new HashSet<>();
+        synchronized (lock)
+        {
+            if(handlers!=null)
+                set.addAll( handlers.keySet() ); // copy
         }
+        return set;
     }
 
     /**
@@ -333,8 +373,10 @@ abstract public class TcpServer
             if(state !=ServerState.accepting)
                 throw new IllegalStateException(state.toString());
 
+            Phaser phaser = new Phaser(serverAgentList.length+1);
+
             for(ServerAgent sa : serverAgentList)
-                sa.selectorThread.execute( sa::onPauseAccepting);
+                sa.selectorThread.execute( ()->sa.onPauseAccepting(phaser) );
 
             phaser.arriveAndAwaitAdvance();
             // afterwards, no new chann will be accepted, and awaitReadable(accepting=false) will fail.
@@ -343,6 +385,17 @@ abstract public class TcpServer
             // we still own the port.
         }
     }
+
+    // # during pause, the server sockets are not closed; we retain the ports so that others cannot poach them.
+    // however, as long as the backlog is not full, clients can still complete handshakes,
+    // consider the connections established; client write/read still works, just blocked on waiting.
+    // # that is not good. therefore during pause, we still do accept(), but immediately close the socket,
+    // sending FIN to client.
+    // # after receiving server FIN, client read should succeed with FIN. client write should fail with RST;
+    // tho, write()s immediately after connect() may appear to succeed to client app.
+    // # if this is not desired, server app can call stopAccepting() instead, so that client connect() won't succeed.
+    // (server may not respond with RST to client SYN, leaving client waiting for a long time)
+    // to resume accepting, start a new server.
 
     /**
      * Resume accepting new connections. See <a href="#life-cycle">Life Cycle</a>.
@@ -355,10 +408,7 @@ abstract public class TcpServer
                 throw new IllegalStateException(state.toString());
 
             for(ServerAgent sa : serverAgentList)
-                sa.selectorThread.execute( ()->sa.onResumeAccepting(serverSocketChannel) );
-
-            ServerAgent sa = serverAgentList[0]; // anyone would do
-            sa.selectorThread.execute(sa::onBecomeAccepter);
+                sa.selectorThread.execute(sa::onResumeAccepting);
 
             state =ServerState.accepting;
         }
@@ -372,11 +422,20 @@ abstract public class TcpServer
         synchronized (lock)
         {
             if(state !=ServerState.acceptingPaused)
-                pauseAccepting(); // blocks till all selectors have handled `onPauseAccepting`
+                pauseAccepting();
 
-            _Util.closeNoThrow(serverSocketChannel, logger);
-            serverSocketChannel=null;
-            // we don't own the port now. another server can take the port.
+            Phaser phaser = new Phaser(serverAgentList.length+1);
+
+            for(ServerAgent sa : serverAgentList)
+                sa.selectorThread.execute(()->sa.onStopAccepting(phaser));
+
+            phaser.arriveAndAwaitAdvance();
+            // afterwards, server sockets can be closed
+
+            for(ServerSocketChannel serverSocketChannel : handlers.keySet())
+                _Util.closeNoThrow(serverSocketChannel, logger);
+            handlers=null;
+            // we don't own the ports now. another server can take the ports.
 
             state =ServerState.acceptingStopped;
         }
@@ -392,8 +451,10 @@ abstract public class TcpServer
             if(state !=ServerState.acceptingStopped)
                 stopAccepting();
 
+            Phaser phaser = new Phaser(serverAgentList.length+1);
+
             for(ServerAgent sd : serverAgentList)
-                sd.selectorThread.execute( sd::onKill);  // close all connections, brutely
+                sd.selectorThread.execute( ()->sd.onKill(phaser) );  // close all connections, brutely
 
             phaser.arriveAndAwaitAdvance();
 
@@ -401,7 +462,6 @@ abstract public class TcpServer
                 SelectorThread.release(sd.selectorThread);
 
             serverAgentList = null;
-            phaser=null;
             ip2Channs =null;
 
             state =ServerState.allStopped;
@@ -464,7 +524,7 @@ abstract public class TcpServer
         }
 
         int channs = counter.get();
-        if(channs>=confMaxConnectionsPerIp)
+        if(channs>=conf.maxConnectionsPerIp)
             return false;
         counter.incrementAndGet(); // non-atomic check-inc. may over max. rare and fine
         return true;
@@ -487,16 +547,20 @@ abstract public class TcpServer
 
 
     // one per selector. accessed by only select flow
-    static class ServerAgent implements ChannImpl.Agent, SelectorThread.OnSelected, SelectorThread.BeforeSelect
+    static class ServerAgent implements ChannImpl.Agent, SelectorThread.BeforeSelect
     {
         final int index;
         final TcpServer server;
         final SelectorThread selectorThread;
         final int maxConnPerAgent;
 
-        // non-null only when server is accepting
-        ServerSocketChannel serverSocketChannel;
-        SelectionKey acceptSK;
+        boolean accepting = true;
+        ArrayList<AcceptAgent> acceptAgents;
+        // for each address, only one thread is the "accepter" at a time that does serverSocket.accept()
+        // accepted connections are distributed among all threads evenly.
+        // then, the thread with the least connections becomes the next accepter for the address.
+        // initially thread[0] is the accepter.
+        // during pause (accepting=false), accepter is still working, by accept() and discard.
 
         volatile int nConnections_volatile;
         HashSet<ChannImpl> allChann = new HashSet<>();
@@ -510,7 +574,34 @@ abstract public class TcpServer
             this.selectorThread = selectorThread;
             this.maxConnPerAgent = maxConnPerAgent;
 
-            selectorThread.execute( ()->selectorThread.actionsBeforeSelect.add(this) );
+            // call onInit() on the selector thread.
+        }
+
+        void onInit()
+        {
+            acceptAgents = new ArrayList<>();
+            // `handlers` has predictable iteration order, same across threads.
+            // therefore `acceptAgents` have same order across threads.
+            server.handlers.forEach((serverSocketChannel, handler)->
+            {
+                AcceptAgent aa = new AcceptAgent(acceptAgents.size(), this, serverSocketChannel, handler);
+                acceptAgents.add(aa);
+                try
+                {
+                    aa.acceptSK = serverSocketChannel.register(selectorThread.selector, 0, aa);
+                }
+                catch(ClosedChannelException e) // impossible
+                {
+                    throw new AssertionError(e);
+                }
+            });
+
+            selectorThread.actionsBeforeSelect.add(this);
+        }
+
+        void onBecomeAcceptor0() // cannot be part of onInit of serverAgent0; must be arranged after ALL onInit.
+        {
+            acceptAgents.forEach( aa->aa.acceptSK.interestOps(SelectionKey.OP_ACCEPT) );
         }
 
         @Override
@@ -539,94 +630,118 @@ abstract public class TcpServer
         {
             allChann.remove(chann);
             nConnections_volatile--;
-            server.ip2Channs_dec(chann.getRemoteIp());
+            server.ip2Channs_dec(chann.getPeerIp());
         }
 
         @Override
         public boolean allowAcceptingRead()
         {
-            return acceptSK!=null;
+            return accepting;
         }
 
-
-        // only one thread is the "accepter" at a time.
-        // accepted connections are distributed among all threads evenly.
-        // then, the thread with the least connections becomes the next accepter
-
-        void onResumeAccepting(ServerSocketChannel serverSocketChannel)
+        void onResumeAccepting()
         {
-            this.serverSocketChannel = serverSocketChannel;
-            try
-            {
-                acceptSK = serverSocketChannel.register(selectorThread.selector, 0, this);
-                // note: interestOp==0, this thread is not the "accepter" yet
-            }
-            catch(ClosedChannelException e) // impossible
-            {
-                throw new AssertionError(e);
-            }
+            assert !accepting;
+            accepting = true;
+            acceptAgents.forEach( aa -> aa.accepting = true );
         }
 
-        void onBecomeAccepter()
+        void onBecomeAccepter(int aaIndex)
         {
-            if(acceptSK==null)  // an onPauseAccepting event came earlier
+            if(acceptAgents==null)  // onStopAccepting event came earlier
                 return;
 
-            acceptSK.interestOps(SelectionKey.OP_ACCEPT);
-
+            AcceptAgent aa = acceptAgents.get(aaIndex);
+            aa.acceptSK.interestOps(SelectionKey.OP_ACCEPT);
             // we could immediately try accept() here, but it most likely would fail.
+
+            if(trace)trace("onBecomeAccepter ", Thread.currentThread().getName(), aa.serverSocketChannel);
         }
 
-        @Override
-        public void onSelected(SelectionKey sk)
+        static class AcceptAgent implements SelectorThread.OnSelected
         {
-            ServerAgent[] serverAgentList = server.serverAgentList;
-            int connList[] = new int[serverAgentList.length];
-            for(int i=0; i<serverAgentList.length; i++)
-                connList[i] = serverAgentList[i].nConnections_volatile;
-            // we are not counting connections still queued for onInitChann()
-            // which can be a problem on a very busy server
+            int aaIndex;
+            int saIndex;
+            ServerAgent[] serverAgentList;
+            ServerSocketChannel serverSocketChannel;
+            Consumer<TcpChannel> handler;
 
-            while(true)
+            SelectionKey acceptSK;
+            boolean accepting=true;
+
+            AcceptAgent(int aaIndex, ServerAgent sa, ServerSocketChannel serverSocketChannel, Consumer<TcpChannel> handler)
             {
-                SocketChannel socketChannel;
-                try
-                {   socketChannel = serverSocketChannel.accept();   }
-                catch(Exception e) // fatal, can't handle
-                {   throw new RuntimeException(e);   }
-                // note: serverSocketChannel can be closed only after PauseAccepting,
-                // therefore it must be not-closed here.
+                this.aaIndex = aaIndex;
 
-                if(socketChannel==null)
-                    break;
+                saIndex = sa.index;
+                serverAgentList = sa.server.serverAgentList;
 
-                // tcp handshake was complete, the client considers that the connection is established.
-                // however the server may immediately close the connection because of limits,
-                // the client won't know until it reads from or write to the connection.
+                this.serverSocketChannel = serverSocketChannel;
+                this.handler = handler;
 
-                // dispatch the connection to the thread with the least connections
-                int indexMin = findMinConn(this.index, connList);
-                ++connList[indexMin];
-                ServerAgent agent = serverAgentList[indexMin];
-                agent.selectorThread.execute( ()->agent.onInitChann(socketChannel) );
-                // typically, agent==this, in which case we still postpone onInitChann() to later time
-                // because we want to do accept() first to empty the backlog.
-
-                // try accept() again.
-                // typically, next accept() will return null. unless there's a flood of connections.
+                // acceptSK is set later
             }
 
-            // choose the next "accepter", the thread with the least connections
-            int indexMin = findMinConn(this.index, connList);
-            if(indexMin!=this.index)
+            @Override
+            public void onSelected(SelectionKey sk)
             {
-                ServerAgent agent = serverAgentList[indexMin];
-                agent.selectorThread.execute(agent::onBecomeAccepter);
-                acceptSK.interestOps(0);
-            }
-            // else, this thread is still the accepter.
+                int connList[] = new int[serverAgentList.length];
+                for(int i=0; i<serverAgentList.length; i++)
+                    connList[i] = serverAgentList[i].nConnections_volatile;
+                // a local understanding of number of connections on each thread.
+                // not accounting for updates by other threads at the same time.
 
-        }
+                while(true)
+                {
+                    SocketChannel socketChannel;
+                    try
+                    {   socketChannel = serverSocketChannel.accept();   }
+                    catch(Exception e) // fatal, can't handle
+                    {   throw new RuntimeException(e);   }
+                    // note: serverSocketChannel can be closed only after PauseAccepting,
+                    // therefore it must be not-closed here.
+
+                    if(socketChannel==null)
+                        break;
+
+                    if(trace)trace("accept()", Thread.currentThread().getName(), socketChannel);
+                    // tcp handshake was complete, the client considers that the connection is established.
+                    // however the server may immediately close the connection because of limits,
+                    // the client won't know until it reads from or writes to the connection.
+
+                    if(!accepting) // PauseAccepting
+                    {
+                        _Util.closeNoThrow(socketChannel, logger);
+                        continue;
+                    }
+
+                    // dispatch the connection to the thread with the least connections
+                    int indexMin = findMinConn(saIndex, connList);
+                    ++connList[indexMin];
+                    ServerAgent agent = serverAgentList[indexMin];
+                    agent.selectorThread.execute( ()->agent.onInitChann(socketChannel, handler) );
+                    // typically, agent==this, in which case we still postpone onInitChann() to later time
+                    // because we want to do accept() first to empty the backlog.
+
+                    // try accept() again.
+                    // typically, next accept() will return null. unless there's a flood of connections.
+
+                } // while(true)
+
+                // choose the next "accepter", the thread with the least connections
+                int indexMin = findMinConn(saIndex, connList);
+                if(indexMin!= saIndex)
+                {
+                    ServerAgent agent = serverAgentList[indexMin];
+                    agent.selectorThread.execute( ()->agent.onBecomeAccepter(aaIndex) );
+                    acceptSK.interestOps(0);
+                }
+                // else, this thread is still the accepter.
+
+            } // onSelected
+
+        } // AcceptAgent
+
         // find the thread with the least connections. preferably this thread.
         static int findMinConn(int thisIndex, int[] connList)
         {
@@ -644,11 +759,13 @@ abstract public class TcpServer
             _Util.closeNoThrow(socketChannel, logger);
             return (Void)null;
         }
-        Void onInitChann(SocketChannel socketChannel)
+        Void onInitChann(SocketChannel socketChannel, Consumer<TcpChannel> handler)
         {
+            if(trace)trace("onInitChann", Thread.currentThread().getName(), socketChannel);
+
             ++nConnections_volatile; // inc it asap. won't overflow.
 
-            if(acceptSK==null) // onPauseAccepting arrived earlier
+            if(!accepting) // onPauseAccepting arrived earlier
                 return _abandon(socketChannel);
 
             if(nConnections_volatile>maxConnPerAgent)
@@ -662,7 +779,7 @@ abstract public class TcpServer
             try
             {
                 socketChannel.configureBlocking(false);
-                server.confSocket(socketChannel);
+                server.conf.socketConf.accept(socketChannel);
             }
             catch(Exception e)
             {
@@ -674,23 +791,23 @@ abstract public class TcpServer
             ChannImpl chann = new ChannImpl(socketChannel, selectorThread, this);
             try
             {
-                server.onAccept(chann); // user code, must not throw
+                handler.accept(chann); // user code, must not throw
             }
-            catch(RuntimeException t) // probably not crippling. not sure what to do with chann here.
+            catch(RuntimeException t) // probably not crippling.
             {
+                chann.close();
                 _Util.logUnexpected(logger, t);
             }
             return (Void)null;
         }
 
 
-        void onPauseAccepting()
+        void onPauseAccepting(Phaser phaser)
         {
-            assert acceptSK!=null;
-
-            acceptSK.cancel();
-            acceptSK=null;
-            serverSocketChannel=null;
+            assert accepting;
+            accepting=false;
+            acceptAgents.forEach( aa -> aa.accepting = false );
+            // acceptSK not touched. accept() calls are still going on.
 
             // for every chann in awaitReadable(accepting=true), call back with error
             for(ChannImpl chann : allChann)
@@ -702,7 +819,7 @@ abstract public class TcpServer
                 }
             }
 
-            server.phaser.arrive();
+            phaser.arrive();
             // afterwards, event issuer may choose to close server socket.
             //
             // also it's guaranteed that no more new chann will be created,
@@ -711,9 +828,18 @@ abstract public class TcpServer
             // event issuer may rely on this guarantee for its state management.
         }
 
-        void onKill()
+        void onStopAccepting(Phaser phaser)
         {
-            assert acceptSK==null; // after PauseAccepting
+            assert !accepting; // after PauseAccepting
+            acceptAgents.forEach(aa -> aa.acceptSK.cancel());
+            acceptAgents =null;
+
+            phaser.arrive();
+        }
+
+        void onKill(Phaser phaser)
+        {
+            assert acceptAgents ==null; // after StopAccepting
 
             // close all connections.
             for(ChannImpl chann : allChann)
@@ -730,11 +856,23 @@ abstract public class TcpServer
 
             selectorThread.actionsBeforeSelect.remove(this);
 
-            server.phaser.arrive();
+            phaser.arrive();
             // event issuer now knows that all chann closed; no read/write/awaitRW/yield() works.
         }
 
     }
 
+
+    static final boolean trace = false;
+    synchronized static void trace(Object... args)
+    {
+        System.out.print("TcpServer ");
+        for(Object arg : args)
+        {
+            System.out.print(arg);
+            System.out.print(" ");
+        }
+        System.out.println();
+    }
 
 }

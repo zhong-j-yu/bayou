@@ -2,6 +2,7 @@ package bayou.http;
 
 import _bayou._tmp._ByteBufferUtil;
 import _bayou._tmp._HexUtil;
+import bayou.ssl.SslConnection;
 import bayou.tcp.TcpConnection;
 import bayou.util.OverLimitException;
 
@@ -47,7 +48,7 @@ class ImplHttpRequestChunkedBody extends ImplHttpRequestEntity.Body
                     return TcpConnection.STALL;
                 }
 
-                if(bb== TcpConnection.TCP_FIN || bb== TcpConnection.SSL_CLOSE_NOTIFY)
+                if(bb== TcpConnection.TCP_FIN || bb== SslConnection.SSL_CLOSE_NOTIFY)
                     throw new IOException("connection closed before end of entity body");
 
                 try
@@ -105,7 +106,7 @@ class ImplHttpRequestChunkedBody extends ImplHttpRequestEntity.Body
             return TcpConnection.STALL;
         }
 
-        if(bb== TcpConnection.TCP_FIN || bb== TcpConnection.SSL_CLOSE_NOTIFY)
+        if(bb== TcpConnection.TCP_FIN || bb== SslConnection.SSL_CLOSE_NOTIFY)
             throw new IOException("connection closed before end of entity body");
 
         long bbBytes = (long)bb.remaining();  // >0

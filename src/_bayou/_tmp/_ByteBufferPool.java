@@ -80,6 +80,8 @@ public class _ByteBufferPool
         this(bufferCapacity, true, defaultExpiration, false);
     }
 
+    // todo: use weak ref for _ByteBufferPool, so that they can be GC-ed.
+    // tho the pool itself is not a heavy object, it prevents the ThreadLocal localCache from GC-ed.
     static final ConcurrentHashMap<Integer, _ByteBufferPool> cachedPools = new ConcurrentHashMap<>();
     public static _ByteBufferPool forCapacity(int bufferCapacity)
     {
