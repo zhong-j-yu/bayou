@@ -1,5 +1,6 @@
 package bayou.websocket;
 
+import _bayou._tmp._HttpHostPort;
 import _bayou._tmp._HttpUtil;
 import _bayou._tmp._Array2ReadOnlyList;
 import _bayou._tmp._StrUtil;
@@ -47,7 +48,8 @@ public class WebSocketRequest
     }
 
     /**
-     * The host[:port].
+     * The host[:port] of the server.
+     * See {@link bayou.http.HttpRequest#host()}.
      * <p>
      *     Example values: <code>"localhost:8080", "example.com"</code>.
      * </p>
@@ -108,52 +110,48 @@ public class WebSocketRequest
      *     new WebSocketRequest("wss://example.com/chat");
      * </pre>
      */
-    // create an open handshake request with ws/wss uri
     public WebSocketRequest(String uri)
     {
         this.ip = InetAddress.getLoopbackAddress();
 
-        int iHost;
-        if(uri.startsWith("ws://"))  // case sensitive?
-        {
+        String uriLo = uri.toLowerCase();
+        if(uriLo.startsWith("ws://"))
             secure = false;
-            iHost = 5;
-        }
-        else if(uri.startsWith("wss://")) // case senstive?
-        {
+        else if(uriLo.startsWith("wss://"))
             secure = true;
-            iHost = 6;
-        }
         else
             throw new IllegalArgumentException("Invalid WebSocket URI: "+uri);
 
+        int iHost = secure ? 6 : 5;
+        String hostPort;
         int iSlash = uri.indexOf('/', iHost);
         int iQuest = uri.indexOf('?', iHost);
         if(iSlash==-1&&iQuest==-1) //  ws://abc.com
         {
-            hostPort = uri.substring(iHost);
+            hostPort = uriLo.substring(iHost);
             resourceName = "/";
         }
         else if(iSlash!=-1 &&(iQuest==-1 || iQuest>iSlash))  // ws://abc.com/foo,  ws://abc.com/foo?bar
         {
-            hostPort = uri.substring(iHost, iSlash);
+            hostPort = uriLo.substring(iHost, iSlash);
             resourceName = uri.substring(iSlash);
         }
         else   //  ws://abc.com?foo ,  ws://abc.com?foo/bar   they are valid according to RFC6455
         {
-            hostPort = uri.substring(iHost, iQuest);
+            hostPort = uriLo.substring(iHost, iQuest);
             resourceName = "/" + uri.substring(iQuest);
         }
 
-        if(hostPort.isEmpty())
+        _HttpHostPort hp = _HttpHostPort.parse(hostPort);
+        if(hp==null)
             throw new IllegalArgumentException("Invalid WebSocket URI: "+uri);
-        // host not validated
+        this.hostPort = hp.toString(secure? 443: 80);
 
         if(!_HttpUtil.isOriginFormUri(resourceName))
             throw new IllegalArgumentException("Invalid WebSocket URI: "+uri);
 
         // same origin
-        this.origin = (secure? "https://": "http://") + hostPort;
+        this.origin = (secure? "https://": "http://") + this.hostPort;
         this.subprotocols = Collections.emptyList();
 
         // origin and subprotocols are fixed. we may need another constructor that accept them as arguments
@@ -175,10 +173,10 @@ public class WebSocketRequest
         this.ip = InetAddress.getLoopbackAddress();
         this.secure = secure;
 
-        if(hostPort ==null || hostPort.isEmpty())
-            throw new IllegalArgumentException("hostPort is missing");
-        this.hostPort = hostPort;
-        // not validated
+        _HttpHostPort hp = _HttpHostPort.parse(hostPort);
+        if(hp==null)
+            throw new IllegalArgumentException("Invalid hostPort: "+hostPort);
+        this.hostPort = hp.toString(secure? 443: 80);
 
         if(resourceName==null || !_HttpUtil.isOriginFormUri(resourceName))
             throw new IllegalArgumentException("illegal resourceName: "+resourceName);

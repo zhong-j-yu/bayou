@@ -1,6 +1,7 @@
 package bayou.http;
 
 import _bayou._tmp._CharDef;
+import _bayou._tmp._Dns;
 import _bayou._tmp._HttpDate;
 import _bayou._tmp._HttpUtil;
 
@@ -414,38 +415,9 @@ public class Cookie
     {
         if(domain==null)
             return;
-        if(!checkDomain2(domain))
+        if(!_Dns.isValidDomain(domain))
             throw new IllegalArgumentException("invalid cookie domain: "+domain);
         // domain must not be a public suffix, but we aren't checking that here
-    }
-    static boolean checkDomain2(String domain)
-    {
-        // syntax:
-        // http://tools.ietf.org/html/rfc1123#page-13
-        // http://tools.ietf.org/html/rfc1034#section-3.5
-        // 1 or more labels separated by ".". each label contains 1 or more letter/digit/hyphen.
-        // each label cannot start/end with hyphen. last label cannot be all digits.
-
-        int state=0;
-        boolean allDigits=true;
-        for(int i=0; i<domain.length(); i++)
-        {
-            char c = domain.charAt(i);
-            if(c>0xff)
-                return false;
-
-            allDigits = allDigits && '0'<=c && c<='9';
-
-            if(_CharDef.check(c, _CharDef.alphaDigitChars))
-                state=1;
-            else if(c=='-' && state!=0)
-                state=2;
-            else if(c=='.' && state==1)
-            {   state=0; allDigits=true;   }
-            else
-                return false;
-        }
-        return state==1 && !allDigits;
     }
 
 

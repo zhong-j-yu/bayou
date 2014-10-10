@@ -85,6 +85,8 @@ public class HttpServer
 
     final HttpServerConf conf;
 
+    ImplTunneller tunneller;
+
     /**
      * Create an HttpServer.
      * <p>
@@ -172,6 +174,9 @@ public class HttpServer
         conf.freeze(); // throws
 
         initHotHandler();
+
+        if(conf.supportedMethods.containsValue("CONNECT"))
+            tunneller = new ImplTunneller(this);
 
         for(HttpUpgrader upgrader : upgraderMap.values())
             upgrader.init(conf); // throws
@@ -338,6 +343,9 @@ public class HttpServer
     {
         tcpServer.stopAll();
         // message?
+
+        if(tunneller !=null)
+            tunneller.close();
     }
 
     /**
@@ -358,6 +366,9 @@ public class HttpServer
     {
         tcpServer.stop(graceTimeout);
         // message?
+
+        if(tunneller !=null)
+            tunneller.close();
     }
 
     void printStartupMessage()

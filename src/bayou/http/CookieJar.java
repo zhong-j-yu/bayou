@@ -1,5 +1,6 @@
 package bayou.http;
 
+import _bayou._tmp._Dns;
 import bayou.async.FiberLocal;
 import bayou.mime.Headers;
 
@@ -230,16 +231,18 @@ public class CookieJar
         {
             cookieDomain = cookieDomain.toLowerCase();
 
-            if(!Cookie.checkDomain2(cookieDomain)) // cannot be IP
+            if(!_Dns.isValidDomain(cookieDomain)) // cannot be IP
                 throw new IllegalArgumentException("invalid cookieDomain: "+cookieDomain);
             // domain must not be a public suffix, but we aren't checking that here
 
             // match requestHost and cookieDomain
-            requestHost = removePort(requestHost);
-            if(requestHost==null) // parse error
-                throw new IllegalArgumentException("invalid Host: "+requestHost);
-            requestHost = requestHost.toLowerCase(); // domain, ipv4, [ipv6].
-            // should be validated and canonicalized. we only lower case it here.
+            // remove port from requestHost. requestHost was already validated.
+            if(requestHost.charAt(0)=='[') // ipv6. ip cannot match domain.
+                throw new IllegalArgumentException("requestHost does not match cookieDomain");
+            // ipv4/domain [:port]
+            int iColon = requestHost.lastIndexOf(':');
+            if(iColon!=-1)
+                requestHost = requestHost.substring(0, iColon);
 
             if(!domainMatches(requestHost, cookieDomain))
                 throw new IllegalArgumentException("requestHost does not match cookieDomain");
@@ -436,25 +439,6 @@ public class CookieJar
         return true;
     }
 
-    static String removePort(String hostHeader)
-    {
-        if(hostHeader==null)
-            return null;
-
-        if(hostHeader.startsWith("["))  // ipv6, for example [FEDC:BA98:7654:3210:FEDC:BA98:7654:3210]:80
-        {
-            int x = hostHeader.lastIndexOf(']');
-            if(x==-1)
-                return null;
-            return hostHeader.substring(0, x+1);
-        }
-
-        int iColon = hostHeader.indexOf(':');
-        if(iColon!=-1)
-            hostHeader = hostHeader.substring(0, iColon);
-        return hostHeader;
-        // host should be a domain or IP. not validated here.
-    }
 
 
 

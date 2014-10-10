@@ -75,15 +75,20 @@ public interface HttpRequest
     String method();
 
     /**
-     * The "Host" header of the request.
+     * The "Host" header of the request. May include the port too.
      * <p>
-     *     This method must return a valid <code>host[:port]</code> in lower case.
-     *     for example, <code>"example.com", "localhost:8080"</code>.
+     *     This method must return a non-null, valid <code>"host[:port]"</code> in lower case.
+     *     e.g. <code>"example.com", "localhost:8080"</code>.
+     * </p>
+     * <p>
+     *     The "host" part is a domain name, an IPv4, or an IPv6 enclosed in "[]", e.g.
+     *     <code>"example.com", "192.168.68.100", "[2001:db8::ff00:42:8329]"</code>.
      * </p>
      * <p>
      *     The default implementation returns <code>header("Host").toLowerCase()</code>.
      * </p>
      */
+    // it's confusing to call this method "host" while it may contain port.
     default String host()
     {
         return header(Headers.Host).toLowerCase();
@@ -92,12 +97,44 @@ public interface HttpRequest
     /**
      * The request URI.
      * <p>
-     *     The request URI must start with a "/", for example, <code>"/query?term=cat"</code>.
-     *     It does not contain scheme or host, see {@link #isHttps()} and {@link #host()} instead.
+     *     Typically, the request URI is in the so called
+     *     <a href="http://tools.ietf.org/html/rfc7230#section-5.3.1">origin-form</a>
+     *     that starts with a "/", for example, <code>"/query?term=cat"</code>.
+     *     There are two exceptions, specifically,
+     * </p>
+     * <ul>
+     *     <li>
+     *         If the request method is CONNECT, the URI must be identical to {@link #host()},
+     *         in the form of <code>"host:port"</code>; the ":port" part is mandatory here.
+     *         This is the <a href="http://tools.ietf.org/html/rfc7230#section-5.3.3">authority-form</a>.
+     *     </li>
+     *     <li>
+     *         If the request method is OPTIONS, the URI can be either a single "*"
+     *         (the <a href="http://tools.ietf.org/html/rfc7230#section-5.3.4">asterisk-form</a>),
+     *         or in the origin-form.
+     *     </li>
+     *     <li>
+     *         Otherwise, the URI must be in the origin-form.
+     *     </li>
+     * </ul>
+     * <p>
+     *     Note that CONNECT and OPTIONS are disabled by default in
+     *     {@link bayou.http.HttpServerConf#supportedMethods(String...)},
+     *     in which case the request URI is always in the origin-form.
      * </p>
      * <p>
-     *     This URI must not contain "fragment", for example, <code>"/path#frag"</code>.
+     *     The "origin-form" does not contain scheme or host, see {@link #isHttps()} and {@link #host()} instead.
+     *     The "origin-form" must not contain "fragment" (like <code>"/path#frag"</code>).
      * </p>
+     * <p>
+     *     An HTTP request line could contain an
+     *     <a href="http://tools.ietf.org/html/rfc7230#section-5.3.2">absolute-form</a>
+     *     URI like <code>"GET http://example.com/abc HTTP/1.1"</code>,
+     *     which must be split into
+     *     {@link #host()} and {@link #uri()} for this interface;
+     *     <code>HttpRequest.uri()</code> is never in the absolute-form.
+     * </p>
+     *
      */
     String uri();
     // Request-URI in rfc2616, or "request-target" in new bis draft.

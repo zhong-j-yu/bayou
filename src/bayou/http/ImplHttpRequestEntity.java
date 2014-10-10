@@ -140,9 +140,6 @@ class ImplHttpRequestEntity implements HttpEntity
             if(request.state100==2)
                 return Result.failure(new IOException("failed to respond 100 Continue."));
 
-            if(t0==0)
-                t0 = System.currentTimeMillis();
-
             if(request.state100==1) // we need to send 100 continue once
             {
                 request.state100=2;
@@ -172,6 +169,9 @@ class ImplHttpRequestEntity implements HttpEntity
                 if(hConn.dump!=null)
                     hConn.dump.print(hConn.respId(), resp100String);
             }
+
+            if(t0==0)
+                t0 = System.currentTimeMillis();
 
             // every read() has a default timeout to guard against slow clients
             // app can rely on that timeout, or set a shorter timeout.

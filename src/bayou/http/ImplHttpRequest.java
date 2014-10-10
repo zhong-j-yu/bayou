@@ -1,10 +1,12 @@
 package bayou.http;
 
+import _bayou._tmp._Ip;
 import bayou.form.FormData;
 import bayou.mime.HeaderMap;
 import bayou.mime.Headers;
 
 import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.security.cert.X509Certificate;
 import java.util.Collections;
 import java.util.List;
@@ -163,13 +165,13 @@ class ImplHttpRequest implements HttpRequest
         // pick the xForwardLevel-th IP. if xForwardLevel>N, pick the N-th.
         xff = pick(xff, xForwardLevel);
         // it must be a valid IPv4 or IPv6 address. domain names are not allowed.
-        // we assume that it's from our trusted load balancer, so it's a valid IP.
-        // otherwise, InetAddress.getByName() may block. todo: do our validation here just to be sure.
+        byte[] ipBytes = _Ip.parseIp(xff, 0, xff.length());
+        if(ipBytes==null) return;
         try
         {
-            ip = InetAddress.getByName(xff); // we don't want this to block!!
+            ip = InetAddress.getByAddress(ipBytes);
         }
-        catch (Exception e)
+        catch (UnknownHostException e) // impossible
         {
             return;
         }

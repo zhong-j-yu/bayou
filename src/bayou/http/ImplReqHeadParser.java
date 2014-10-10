@@ -46,13 +46,17 @@ class ImplReqHeadParser
     String trim_string()
     {
         int end=iChar;
-        while(end>0 && chars[end-1]<=SP)
+        while(end>0 && isWS(chars[end-1]))
             end--;
         int start=0;
-        while(start<end && chars[start]<=SP)
+        while(start<end && isWS(chars[start]))
             start++;
         iChar=0;
         return new String(chars, start, end-start);
+    }
+    static boolean isWS(char ch) // only for SP and HT
+    {
+        return ch==SP || ch==HT;
     }
 
     static final int SP=' ', HT='\t', CR='\r', LF='\n', COLON=':';
@@ -67,9 +71,6 @@ class ImplReqHeadParser
     }
 
     ImplHttpRequest request;
-//    String method;
-//    String uri;
-//    int httpMinorVersion=-1; // 0 or 1.  // note: major version is always 1
     HeaderMap headers; //  == request.headers;
     String currHeaderName;  // in nice form
 
@@ -370,6 +371,7 @@ class ImplReqHeadParser
                     } else {  // not line folding. value ends.
                         unread(bb);
 
+                        // rfc7230$3.2 - OWS field-value OWS
                         String value = trim_string(); // usually there's a leading SP
                         // note: even if value is empty, we'll include it in the `headers`.
                         // a header present with an empty value can be different from a header missing. see `Accept`

@@ -1,5 +1,6 @@
 package bayou.http;
 
+import _bayou._tmp._HttpHostPort;
 import _bayou._tmp._HttpUtil;
 import bayou.form.FormData;
 import bayou.mime.HeaderMap;
@@ -55,64 +56,17 @@ public class HttpRequestImpl implements HttpRequest
      */
     public HttpRequestImpl(String method, String uri, HttpEntity entity)
     {
-        // determine Host, uri, http/s
-        String uriLo = uri.toLowerCase();
-        int iHost;
-        if(uriLo.startsWith("http://"))
-        {
-            isHttps = false;
-            iHost = 7;
-        }
-        else if(uriLo.startsWith("https://"))
-        {
-            isHttps = true;
-            iHost = 8;
-        }
-        else
-        {
-            this.uri = uri;  // assumed to be in the form abs-path[?query], validated later
-            isHttps = false;
-            iHost = 0;
-            headers.put(Headers.Host, "unknown-host");
-            // there must be a Host header. app can call host(string) after constructor.
-        }
-        if(iHost>0)  // extract Host from uriLo
-        {
-            String host;
+        this.method = method;
 
-            int iSlash = uriLo.indexOf('/', iHost);
-            int iQuest = uriLo.indexOf('?', iHost);
-            if(iSlash==-1&&iQuest==-1) //  http://abc.com
-            {
-                host = uriLo.substring(iHost);
-                this.uri = "/";
-            }
-            else if(iSlash!=-1 &&(iQuest==-1 || iQuest>iSlash))  // http://abc.com/foo,  http://abc.com/foo?bar
-            {
-                host = uriLo.substring(iHost, iSlash);
-                this.uri = uriLo.substring(iSlash);
-            }
-            else
-            {
-                //  http://abc.com?foo ,  http://abc.com?foo/bar
-                // they are invalid according to RFC2616. but they are in the generic form of RFC3986.
-                // let's accept them anyway, not much harm.
-                host = uriLo.substring(iHost, iQuest);
-                this.uri = "/" + uriLo.substring(iQuest);
-            }
+        headers.put(Headers.Host, "unknown-host");
+        // there must be a Host header. app can call host(string) after constructor.
 
-            if(host.isEmpty())
-                throw new IllegalArgumentException("invalid uri: "+uri);
-            headers.put(Headers.Host, host);  // not validated
-            // Origin header: do not add automatically. simulate browsers that don't do that.
-            // for unit testing POST requests, we want to fail if CSRF is not set up correctly,
-            // so that app will fail if it omits to add CSRF field in form
-        }
+        this.uri(uri);  // may override Host header
 
-        if(!_HttpUtil.isOriginFormUri(this.uri))
-            throw new IllegalArgumentException("invalid uri: "+uri);
+        // Origin header: do not add automatically. simulate browsers that don't do that.
+        // for unit testing POST requests, we want to fail if CSRF is not set up correctly,
+        // so that app will fail if it omits to add CSRF field in form
 
-        this.method = method; // not validated
         this.entity = entity;
 
         // defaults of other fields
@@ -365,22 +319,58 @@ public class HttpRequestImpl implements HttpRequest
      */
     public HttpRequestImpl host(String host)
     {
-        // don't do host.toLowerCase() here. be consistent with header("Host", host) behavior.
+        _HttpHostPort hp = _HttpHostPort.parse(host);
+        if(hp==null)
+            throw new IllegalArgumentException("Invalid host: "+host);
+        host=hp.toString(-1);
+
         return header(Headers.Host, host);
     }
 
     /**
      * Set the request URI.
+     * <p>
+     *     This method also accepts absolute URI, e.g. "https://example.com/abc?q",
+     *     which will also affect {@link #isHttps()} and {@link #host()}.
+     * </p>
      * @return this
      */
     // no method for setting uri params. use FormData.toGet/PostRequest instead.
     public HttpRequestImpl uri(String uri)
     {
-        if(!_HttpUtil.isOriginFormUri(uri))
-            throw new IllegalArgumentException("invalid uri: "+uri);
-
-        this.uri = uri;
         this.uriFormData_volatile=null;
+
+        if(method.equals("CONNECT"))
+        {
+            // uri must be host:port
+            _HttpHostPort hp = _HttpHostPort.parse(uri);
+            if(hp==null) // parse error
+                throw new IllegalArgumentException("Invalid uri for CONNECT: "+uri);
+            if(hp.port==-1) // port is mandatory for CONNECT
+                throw new IllegalArgumentException("Missing port for CONNECT target: "+uri);
+            uri = hp.toString(-1); // reconstructed, normalized
+
+            this.uri = uri;
+            headers.put(Headers.Host, uri);
+        }
+        else // not CONNECT
+        {
+            RequestTarget rt = RequestTarget.of(isHttps, method, uri, null);
+            if(rt==null)
+                throw new IllegalArgumentException("Invalid uri: "+uri);
+            if(rt.host!=null) // uri is absolute, containing host
+            {
+                _HttpHostPort hp = _HttpHostPort.parse(rt.host);
+                if(hp==null) // parse error: host in uri
+                    throw new IllegalArgumentException("Invalid uri: "+uri);
+                int implicitPort = rt.isHttps ? 443 : 80;
+                String host = hp.toString(implicitPort);
+
+                headers.put(Headers.Host, host);
+            }
+            this.isHttps = rt.isHttps;
+            this.uri = rt.reqUri;
+        }
         return this;
     }
 

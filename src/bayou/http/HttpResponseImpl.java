@@ -2,6 +2,7 @@ package bayou.http;
 
 import _bayou._tmp._HttpUtil;
 import _bayou._tmp._Util;
+import bayou.async.Async;
 import bayou.async.AutoAsync;
 import bayou.bytes.ByteSource;
 import bayou.mime.ContentType;
@@ -283,6 +284,14 @@ public class HttpResponseImpl implements HttpResponse, AutoAsync<HttpResponse>
         _HttpUtil.validateEtag(etag);
         entityMod().etag = etag;
         return this;
+    }
+
+
+    static Async<HttpResponse> toAsync(HttpResponse response)
+    {
+        if(response instanceof HttpResponseImpl) // common
+            return (HttpResponseImpl)response;
+        return Async.success(response);
     }
 
 }

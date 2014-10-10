@@ -163,18 +163,24 @@ public interface HttpResponse
      * </p>
      * <ul>
      *     <li>
-     *         Status is 204. <code>entity()</code> must return null.
+     *         Status is 204. <code>entity()</code> should return null.
      *     </li>
      *     <li>
-     *         Status is 304. <code>entity()</code> must return null.
+     *         Status is 304. <code>entity()</code> should return null.
      *         However, a server app rarely needs to generate a 304 response,
      *         because HttpServer usually handles conditional GET requests
      *         {@link HttpServerConf#autoConditional(boolean) automatically}.
      *     </li>
      *     <li>
+     *         Status is 2xx, and the request method is CONNECT. <code>entity()</code> should return null.
+     *     </li>
+     *     <li>
      *         Status is 1xx. However, this interface forbids 1xx in {@link #status()} anyway.
      *     </li>
      * </ul>
+     * <p>
+     *     If <code>entity()</code> should return null, but returns non-null, the entity should be ignored.
+     * </p>
      * <p>
      *     If the request method is HEAD, the response should contain an entity,
      *     as it would have for a GET request.

@@ -37,10 +37,10 @@ class ImplConn
         if(dump!=null)
             dump.print(connId(), " open [", nbConn.getPeerIp().getHostAddress(), "] ==\r\n");
 
-        startFiber();
+        startFiber(); // do that in a named method, to have a better fiber trace.
     }
 
-    void startFiber() // to give it a better fiber trace
+    void startFiber()
     {
         // all code are run in this fiber.
         new Fiber<Void>(nbConn.getExecutor(), fiberName(null), ()->
@@ -61,6 +61,7 @@ class ImplConn
     int reqId;
     ImplConnReq xReq;
     ImplHttpRequest request;
+    TcpConnection tunnelConn;
 
     HttpResponse response;
     ImplConnResp xResp;
@@ -290,6 +291,9 @@ class ImplConn
             respAsync = HttpResponse.internalError(e);
         }
 
+        if(request.method.equals("CONNECT"))
+            respAsync = respAsync.then( resp->server.tunneller.tryConnect(request, resp, this) );
+
         Result<? extends HttpResponse> respResult = respAsync.pollResult();
         if(respResult!=null) // immediate completion is quite common
             return handlerDone(respResult);
@@ -327,13 +331,25 @@ class ImplConn
         // no attempt to write resp in that case, since it'll probably fail too.
 
         if(request.state100==1)
-            return doWriteResp();  // no drain
-        // we don't expect client to send the body. if we try to drain before writing response, we may wait in vain.
-        // client may send body anyway without seeing a 100 response, but then it must have concurrent read/write flows.
-        // response will be tagged Connection:close. after response, we'll still try to drain inbound data,
-        // a good client should imm close the connection after receiving the response, so the draining ends imm too.
-
-        // consider sick case: Content-Length:0 and Expect:100-continue
+        {
+            if(tunnelConn!=null)
+            {
+                return drainReqBodyThenWriteResp();
+                // CONNECT request with body and Expect:100-continue.
+                // this is highly unlikely in practice.
+                // we must drain the request body before tunneling.
+            }
+            else
+            {
+                return doWriteResp();  // no drain
+                // client expects 100 before sending the body. app responds without reading request body.
+                // in this case, it's preferred by both ends that the request body is not sent.
+                // client may send body anyway without seeing a 100 response, but then it must have concurrent read/write flows.
+                // response will be tagged Connection:close. after response, we'll still try to drain inbound data,
+                // a good client should imm close the connection after receiving the response, so the draining ends imm too.
+                // consider sick case: Content-Length:0 and Expect:100-continue
+            }
+        }
 
         // state100 == 0 or 3.
 
@@ -352,7 +368,7 @@ class ImplConn
     private Goto drainReqBodyThenWriteResp()
     {
         ImplHttpRequestEntity entity = (ImplHttpRequestEntity)request.entity;
-        final ImplHttpRequestEntity.Body body = entity.getBodyInternal();  // // state100 == 0 or 3.
+        final ImplHttpRequestEntity.Body body = entity.getBodyInternal();
         body.closed = false; // user may closed the body. clear it so we can read().
 
         // note: each body.read() will check confClientUploadTimeout, throughput, max body length
@@ -380,6 +396,18 @@ class ImplConn
 
     Goto doWriteResp()
     {
+        if(tunnelConn!=null)
+        {
+            server.tunneller.doTunnel(this, nbConn, tunnelConn);
+
+            request = null;
+            response = null;
+            tunnelConn = null;
+
+            promise.succeed(null); // this fiber ends
+            return Goto.NA;
+        }
+
         // forbid reading request body from here on.
         request.responded = true;
 
@@ -522,6 +550,12 @@ class ImplConn
                 exception==null?"":exception.toString(),
                 "\r\n"
             );
+
+        if(tunnelConn!=null)
+        {
+            tunnelConn.close(null);
+            tunnelConn=null;
+        }
 
         Async<Void> closing = nbConn.close(drainTimeout);
         nbConn =null;

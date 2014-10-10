@@ -193,4 +193,7 @@ public class _Util
     {
         throw (T)t;
     }
+
+    public static final Exception parseError = new Exception("parse error", null, false, false){};
+
 }

@@ -37,7 +37,7 @@ import java.util.concurrent.Executor;
  *     <!--
  *         actually read actions can occur concurrently with write actions,
  *         there can be two concurrent r/w flows. but that's probably not interesting to app,
- *         which will serialize all actions any way on the executor.
+ *         which will serialize all actions anyway on the executor.
  *     -->
  * </p>
  */
@@ -100,7 +100,7 @@ public interface TcpConnection
      *     </li>
      *     <li>
      *         {@link #TCP_FIN} or {@link bayou.ssl.SslConnection#SSL_CLOSE_NOTIFY} - TCP FIN or SSL close-notify record is received.
-     *         You should not call read() again.
+     *         After that, read() should not be called again.
      *     </li>
      *     <li>
      *         A ByteBuffer containing application data.
@@ -185,7 +185,7 @@ public interface TcpConnection
     /**
      * Write bytes from the head of the write queue.
      * <p>
-     *     This method returns after write queue is cleared, or send buffer is full.
+     *     When this method returns, either write queue is cleared, or send buffer is full.
      * </p>
      * <p>
      *     If {@link #getWriteQueueSize()} does not decrease to 0 after write(),

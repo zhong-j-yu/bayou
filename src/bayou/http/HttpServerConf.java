@@ -507,46 +507,34 @@ public class HttpServerConf
 
     // conf HttpServer ............................................................................
 
-    // app probably should limit it to only HEAD/GET/POST
-    // CONNECT not supported - app cannot meaningfully impl it (other than return an error code)
     HashMap<_ChArr, String> supportedMethods;
     { // default
-        supportedMethods("OPTIONS", "GET", "HEAD", "POST", "PUT", "DELETE", "TRACE");
+        supportedMethods("GET", "HEAD", "POST", "PUT", "DELETE");
+        // CONNECT, OPTIONS, TRACE are standard methods listed in RFC7231, but they are
+        //    excluded by default since most applications don't expect them
     }
     /**
      * HTTP methods supported by the server.
      * <p><code>
-     *     default: { "OPTIONS", "GET", "HEAD", "POST", "PUT", "DELETE", "TRACE" }
+     *     default: { "GET", "HEAD", "POST", "PUT", "DELETE" }
      * </code></p>
      * <p>
      *     The server will send a 501 response if the method of an HTTP request is not among the supported.
      * </p>
-     * <p>
-     *     App may want to reduce methods, e.g. to HEAD/GET/POST only.
-     *     Or app may want to add non-standard methods.
-     * </p>
-     * <p>
-     *     <code>HEAD</code> method is always handled automatically, app can treat any HEAD request
-     *     as a GET request, the server will not send the response body.
-     * </p>
-     * <p>
-     *     <code>CONNECT</code> method cannot be supported; it must not be passed to this method.
-     * </p>
      *
      * @return `this`
      */
+    // App may want to reduce methods, e.g. to HEAD/GET/POST only.
+    // Or app may want to add non-standard methods.
     public HttpServerConf supportedMethods(String... methods)
     {
         assertCanChange();
 
-        // unlikely to fail. supportedMethods() means the read method
         require(methods.length > 0, "methods.length>0");
 
         HashMap<_ChArr, String> map = new HashMap<>();
         for(String method : methods)
         {
-            if(method.equals("CONNECT"))
-                throw new IllegalArgumentException("CONNECT method cannot be supported");
             _ChArr str = new _ChArr(method.toCharArray(), method.length());
             map.put(str, method.intern());  // most likely already intern-ed.
         }

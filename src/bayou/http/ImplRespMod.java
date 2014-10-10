@@ -146,19 +146,20 @@ class ImplRespMod
         HttpStatus statusL = appResponse.status(); // may change later (200 to 304/412/206)
         int statusCodeL = statusL.code;
         if(statusCodeL<200)  // 1xx not supported
-            throw new AssertionError("non-final status code ["+statusCodeL+"] not allowed in HttpResponse");
+            throw new RuntimeException("non-final status code ["+statusCodeL+"] not allowed in HttpResponse");
 
         HttpEntity entityL = appResponse.entity(); // may change later
 
+        // tunnelling (2xx response to CONNECT request) is not handled in this method
         if(statusCodeL==204 || statusCodeL==304) // must have no entity
         {
-            if(entityL!=null) // be strict
-                throw new AssertionError("response must not have entity for status "+statusCodeL);
+            if(entityL!=null) // be loose, ignore it
+                entityL = null;
         }
         else // must have an entity
         {
             if(entityL==null) // be strict
-                throw new AssertionError("response must have an entity for status "+statusCodeL);
+                throw new RuntimeException("response must have an entity for status "+statusCodeL);
         }
 
 

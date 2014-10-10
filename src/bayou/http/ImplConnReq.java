@@ -1,7 +1,7 @@
 package bayou.http;
 
 import _bayou._tmp._Array2ReadOnlyList;
-import _bayou._tmp._HttpUtil;
+import _bayou._tmp._HttpHostPort;
 import _bayou._tmp._JobTimeout;
 import _bayou._tmp._StrUtil;
 import bayou.async.Async;
@@ -169,51 +169,54 @@ class ImplConnReq
     Goto parse2()
     {
         HeaderMap headers = request.headers;
-
-
-        // we guarantee to app that Host header exists and is non-empty.
-        String hvHost = headers.get(Headers.Host);
-
-        if(hvHost==null)
-            return reqBad(HttpStatus.c400_Bad_Request, "Host header is missing");
-        // if request is HTTP/1.0, it's legal to not carry Host header. we reject that case as well,
-        // speculating that nowadays 1.0 clients will send Host header too.
-        // if that's a problem, we need to insert a surrogate Host header, defined by a conf variable
-
-        if(hvHost.isEmpty())
-            return reqBad(HttpStatus.c400_Bad_Request, "Host header is empty");
-        // theoretically Host header can be empty.
-        // for example, if the URI of a request is an URN, Host must exist and be empty.
-        // we don't support such cases, which probably don't really exist.
-
-
-        // request.uri is non empty, and contains only legal uri chars
-        String uri = request.uri;
-        // it can be in 4 forms. we only support one form: origin-form, abs-path[?query]
-        if(uri.charAt(0)!='/') // not origin-form. not common
-        {
-            if(uri.equals("*"))
-            {
-                if(request.method.equals("OPTIONS")) // fine, we'll just respond right here. app won't get it.
-                    return reqBad(HttpStatus.c200_OK, ""); // hackish. not really a bad request. conn will be closed
-                else // "*" not valid for any other method
-                    return reqBad(HttpStatus.c400_Bad_Request, "Request-URI is invalid");
-            }
-            else // since we don't allow CONNECT method, the only possible form here is absolute-form
-            {
-                // for example: http://host:port/path
-                // we only support http/https scheme. reject anything else
-                uri = extractOriginForm(uri, hvHost);
-                if(uri==null) // parse error
-                    return reqBad(HttpStatus.c400_Bad_Request, "Request-URI is invalid");
-                request.uri = uri;
-            }
-        }
-        if(!_HttpUtil.isOriginFormUri(uri))
-            return reqBad(HttpStatus.c400_Bad_Request, "Request-URI is invalid");
-
-
         String hv; // var for header values
+
+        // scheme, host, request-target
+        if(request.method.equals("CONNECT")) // usually false; CONNECT is disabled by default.
+        {
+            // request-target must be host:port, where host is domain, ipv4, or [ipv6].
+            // port is not optional - there's no default port.
+            String target = request.uri;
+            _HttpHostPort hp = _HttpHostPort.parse(target);
+            if(hp==null) // parse error
+                return reqBad(HttpStatus.c400_Bad_Request, "Invalid Host: "+target);
+            if(hp.port==-1) // port is mandatory for CONNECT
+                return reqBad(HttpStatus.c400_Bad_Request, "Missing port in Host: "+target);
+            target = hp.toString(-1); // reconstructed, normalized
+            request.uri = target;
+            headers.put(Headers.Host, target);
+            // HTTP/1.1 client should send Host header identical to request-target for CONNECT.
+            // here we simply add/override Host with request-target.
+        }
+        else // not CONNECT
+        {
+            hv = headers.get(Headers.Host); // may be null or empty
+            RequestTarget rt = RequestTarget.of(request.isHttps, request.method, request.uri, hv);
+            if(rt==null)
+                return reqBad(HttpStatus.c400_Bad_Request, "Invalid request-target: "+request.uri);
+            request.isHttps = rt.isHttps;
+            request.uri = rt.reqUri;
+
+            if(rt.host ==null)
+                return reqBad(HttpStatus.c400_Bad_Request, "Host is missing");
+            // if request is HTTP/1.0, it's legal to not carry Host header. we reject that case,
+            // speculating that nowadays 1.0 clients will send Host header too.
+            // if that's a problem, we need to insert a surrogate Host header, defined by a conf variable
+            if(rt.host.isEmpty())
+                return reqBad(HttpStatus.c400_Bad_Request, "Host is empty");
+            // theoretically Host header can be empty.
+            // for example, if the URI of a request is an URN, Host must exist and be empty.
+            // we don't support such cases, which probably don't really exist.
+
+            _HttpHostPort hp = _HttpHostPort.parse(rt.host);
+            if(hp==null) // parse error
+                return reqBad(HttpStatus.c400_Bad_Request, "Invalid Host: "+rt.host);
+            int implicitPort = request.isHttps ? 443 : 80;
+            String host = hp.toString(implicitPort); // reconstructed, normalized.
+            headers.put(Headers.Host, host);
+            // original Host header may be overridden if request-target is an absolute URI.
+        }
+
 
         ContentType contentType=null;
         if(null!=(hv=headers.get(Headers.Content_Type)))
@@ -324,40 +327,6 @@ class ImplConnReq
         return finish(Goto.reqGood);
     }
 
-
-    // e.g.   http://abc.com:8080/path  =>  /path
-    // absoluteForm:  http[s] :// host [:port] [path] [ ? query ]
-    // not optimized. we don't expect this method to be called often.
-    static String extractOriginForm(String absoluteForm, String host)
-    {
-        absoluteForm = absoluteForm.toLowerCase();
-        host = host.toLowerCase();
-
-        int iHost;
-        if(absoluteForm.startsWith("http://"))
-            iHost = 7;
-        else if(absoluteForm.startsWith("https://"))
-            iHost = 8;
-        else
-            return null;
-
-        if(!absoluteForm.startsWith(host, iHost))
-            return null;
-
-        iHost += host.length();
-
-        String rest = absoluteForm.substring(iHost);
-        if(rest.isEmpty())  // example: http://abc.com
-            return "/";
-        // expect "/" or "?"
-        char c0 = rest.charAt(0);
-        if(c0=='/')
-            return rest;
-        else if(c0=='?')  // example: http://abc.com?query
-            return "/"+rest;
-        else
-            return null;
-    }
 
     List<X509Certificate> certs()
     {
