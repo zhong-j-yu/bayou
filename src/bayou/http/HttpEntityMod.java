@@ -78,4 +78,14 @@ class HttpEntityMod implements HttpEntity
         else
             return this.etag;
     }
+
+    Boolean etagIsWeak=null; // null means no mod
+    @Override
+    public boolean etagIsWeak()
+    {
+        if(etagIsWeak==null)
+            return origin.etagIsWeak();
+        else
+            return etagIsWeak.booleanValue();
+    }
 }

@@ -27,7 +27,6 @@ import java.util.*;
  *     <code>"token; p1; p2=v2"</code>.
  * </p>
  */
-// currently we don't support param without value. for example:
 public class TokenParams
 {
     final String token;   // case preserved

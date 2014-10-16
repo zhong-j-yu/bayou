@@ -43,9 +43,11 @@ class ImplHttpRequestEntity implements HttpEntity
         return contentType;
     }
 
-    // Content-Encoding is not currently supported in request
-    // if support is added later, for known encoding, we'll automatically decode, so this method still returns null.
-    public String contentEncoding(){ return null; }
+    String contentEncoding;
+    public String contentEncoding()
+    {
+        return contentEncoding;
+    }
 
     public String etag(){ return null; } // should not exist in request
 

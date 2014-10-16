@@ -32,6 +32,7 @@ public class CachedHttpEntity implements HttpEntity
     final Instant lastModified;
     final Instant expires;
     final String etag;
+    final boolean etagIsWeak;
 
     /**
      * Create a cache of the origin entity.
@@ -47,6 +48,7 @@ public class CachedHttpEntity implements HttpEntity
         this.contentType = origin.contentType();
         this.contentEncoding = origin.contentEncoding();
         this.etag = origin.etag();
+        this.etagIsWeak = origin.etagIsWeak();
         this.lastModified = origin.lastModified();
         this.expires = origin.expires();
     }
@@ -151,4 +153,12 @@ public class CachedHttpEntity implements HttpEntity
         return etag;
     }
 
+    /**
+     * Return <code>"etagIsWeak"</code> of the origin entity.
+     */
+    @Override
+    public boolean etagIsWeak()
+    {
+        return etagIsWeak;
+    }
 }

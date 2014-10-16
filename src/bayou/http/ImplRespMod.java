@@ -598,7 +598,10 @@ class ImplRespMod
             // we also advised in getEtag() to exclude " and \ to avoid the problem (see http bis)
             _HttpUtil.validateEtag(etag);
 
-            headers.put(ETag, _StrUtil.doQuote(etag));
+            String s = _StrUtil.doQuote(etag);
+            if(entity.etagIsWeak())
+                s = "W/"+s;
+            headers.put(ETag, s);
         }
 
         Instant lastModified = entity.lastModified();
@@ -629,7 +632,7 @@ class ImplRespMod
         String hv;
 
         hv = requestHeaders.get(If_Match);
-        if(hv!=null && !matchEtag(hv, entity.etag()))
+        if(hv!=null && !matchEtag(hv, entity, true))
             return c412_Precondition_Failed;
 
         hv = requestHeaders.get(If_Unmodified_Since);
@@ -647,8 +650,8 @@ class ImplRespMod
 
         Boolean iIfNoneMatch = null;
         hv = requestHeaders.get(If_None_Match);
-        if(hv!=null)
-            iIfNoneMatch = !matchEtag(hv, entity.etag()) ? Boolean.TRUE : Boolean.FALSE ;
+        if(hv!=null) // weak comparison! - http://tools.ietf.org/html/rfc7232#section-3.2
+            iIfNoneMatch = !matchEtag(hv, entity, false) ? Boolean.TRUE : Boolean.FALSE ;
 
         if(iIfNoneMatch==Boolean.TRUE)
             return c200_OK;
@@ -669,20 +672,23 @@ class ImplRespMod
     }
 
     // tags from If-Match/If-None-Match, tag from GET 200 entity (can be null)
-    static boolean matchEtag(String tags, String tag)
+    static boolean matchEtag(String tags, HttpEntity entity, boolean strongMatch)
     {
         if(tags.equals("*"))
             return true;  // even if tag==null
+        String tag = entity.etag();
         if(tag==null)
+            return false;
+        if(entity.etagIsWeak()&&strongMatch)
             return false;
 
         // tags should be 1#entity-tag, and we treat entity-tag as quoted-string (rfc2616), with possible escaping.
         // if parsing fails, we should really return 400 to client. instead, we treat it simply as no match.
-        int match = matchEtag2(tags, tag);
+        int match = matchEtag2(tags, tag, strongMatch);
         return match == +1;
     }
     // return [+1] match  [0] no match. [-1] parsing fails, tags is malformed.
-    static int matchEtag2(String tags, String tag)
+    static int matchEtag2(String tags, String tag, boolean strongMatch)
     {
         final int N = tags.length();
         int i = 0;  // i<=N
@@ -692,18 +698,16 @@ class ImplRespMod
             i = _StrUtil.skipWhiteSpaces(tags, i);
             if(i==N)
                 return -1;
-            boolean esc=false;
-            if(tags.startsWith("W/\"", i)) // weak tag; out tag is always strong, won't match. to skip to next element
-            {
-                i+=3;
-            }
-            else if(tags.charAt(i)!=DQUOTE)
-            {
+            boolean W = tags.startsWith("W/", i); // weak tag
+            if(W)
+                i+=2;
+            if(tags.charAt(i)!=DQUOTE)
                 return -1;
-            }
-            else // DQUOTE. try match
+            i+=1;
+
+            boolean esc=false;
+            if(!W || !strongMatch) // otherwise (W&&strongMatch) does not match, skip to next element
             {
-                i+=1;
                 final int J = tag.length();
                 int j=0; // j<=J
                 for( ; i<N; i++)
@@ -870,6 +874,8 @@ class ImplRespMod
 
                 String etag = entityL.etag();
                 if(etag==null)
+                    return;
+                if(entityL.etagIsWeak())
                     return;
                 if(!hIfRange.substring(1, len-1).equals(etag))
                     return;

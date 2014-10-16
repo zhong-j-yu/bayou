@@ -817,6 +817,53 @@ public class HttpServerConf
     }
 
 
+    String requestEncodingPolicy = "reject";
+    boolean _requestEncodingReject = true;
+    /**
+     * How to handle request entity Content-Encoding.
+     * <p><code>
+     *     default: "reject"
+     * </code></p>
+     * <p>
+     *     Available options are:
+     * </p>
+     * <dl>
+     *     <dt>"reject"</dt>
+     *     <dd>
+     *         Reject any request with Content-Encoding, with a "415 Unsupported Media Type" response. <br>
+     *         Most clients do not encode requests, and most server applications do not expect encoded requests. <br>
+     *         With the default "reject" policy, the server application is assured that any request passed to it
+     *         has no {@link HttpEntity#contentEncoding() entity contentEncoding}.
+     *     </dd>
+     *     <dt>"accept"</dt>
+     *     <dd>
+     *         Accept requests with Content-Encoding. <br>
+     *         The server application must be prepared to handle non-null
+     *         {@link HttpEntity#contentEncoding() entity contentEncoding} in any request,
+     *         and may need to decode the {@link HttpEntity#body() entity body} accordingly, e.g. with
+     *         {@link bayou.gzip.GunzipByteSource}.
+     *     </dd>
+     * </dl>
+     * @return `this`
+     */
+    public HttpServerConf requestEncodingPolicy(String requestEncodingPolicy)
+    {
+        assertCanChange();
+
+        boolean _requestEncodingReject;
+        if(requestEncodingPolicy.equals("reject"))
+            _requestEncodingReject = true;
+        else if(requestEncodingPolicy.equals("accept"))
+            _requestEncodingReject = false;
+        else
+            throw new IllegalArgumentException("invalid requestEncodingPolicy: "+requestEncodingPolicy);
+        // later we may add more policies, e.g. auto-decode
+
+        this.requestEncodingPolicy = requestEncodingPolicy;
+        this._requestEncodingReject = _requestEncodingReject;
+
+        return this;
+    }
 
     int xForwardLevel = 0;
     /**
@@ -1011,8 +1058,8 @@ public class HttpServerConf
      *     <!-- we don't explain the logic in detail here since it's too complicated -->
      * </p>
      * <p>
-     *     Response entity's {@link bayou.http.HttpEntity#etag() ETag}
-     *     and {@link bayou.http.HttpEntity#lastModified() Last-Modified}
+     *     Response entity's {@link HttpEntity#etag() ETag}
+     *     and {@link HttpEntity#lastModified() Last-Modified}
      *     headers are consulted for this feature.
      * </p>
      * <p>
@@ -1303,6 +1350,10 @@ public class HttpServerConf
     public Duration get_closeTimeout()
     {
         return closeTimeout;
+    }
+    public String get_requestEncodingPolicy()
+    {
+        return requestEncodingPolicy;
     }
     public int get_xForwardLevel()
     {

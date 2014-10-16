@@ -237,6 +237,7 @@ class ImplConnReq
             if(!_StrUtil.equalIgnoreCase(hv, "chunked"))
                 return reqBad(HttpStatus.c501_Not_Implemented,
                         "Only `chunked` is understood for Transfer-Encoding header");
+            // later we may support "gzip, chunked"
 
             //we have a chunked entity body
             //if Content-Length is present along with Transfer-Encoding, Content-Length is ignored
@@ -291,13 +292,14 @@ class ImplConnReq
 
         if(reqEntity!=null)
         {
-            if(null!=(hv=headers.get(Headers.Content_Encoding)))
-                return reqBad(HttpStatus.c415_Unsupported_Media_Type, "Unsupported Content-Encoding: "+hv);
-            // we may support gzip in future.
-            // more generally, we can allow app to add custom decoders.
-            // but in reality this header is not set by clients. so we don't need to care.
-
             reqEntity.contentType = contentType; // can be null
+
+            if(null!=(hv=headers.get(Headers.Content_Encoding)))
+            {
+                if(hConn.conf._requestEncodingReject)
+                    return reqBad(HttpStatus.c415_Unsupported_Media_Type, "Unsupported Content-Encoding: " + hv);
+                reqEntity.contentEncoding = hv.toLowerCase(); // not validated. usually a single token.
+            }
 
             // there shouldn't be other entity headers in request.
             // if they exist, they'll be in the request headers, but not entity properties.

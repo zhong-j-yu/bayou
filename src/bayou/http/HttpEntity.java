@@ -129,15 +129,18 @@ public interface HttpEntity
      *     If contentEncoding!=null, the reader of the body needs to decode it to get the original content.
      * </p>
      * <p>
-     *     {@link HttpServer} always automatically decodes the request entity, or rejects the request
-     *     if it is unable to decode.
-     *     A server app can assume that contentEncoding==null for all request entities.
+     *     The default implementation returns null.
      * </p>
      * <p>
-     *     The default implementation returns null.
+     *     See also {@link HttpServerConf#requestEncodingPolicy(String)}.
+     *     Note that by default HttpServer rejects any request with Content-Encoding,
+     *     in which case the server app can assert that
+     *     entity.contentEncoding==null for all requests passed to it.
      * </p>
      */
     default String contentEncoding(){ return null; }
+    // ideally, the return type should be List<String>, as a list of content-coding.
+    // but practically, a single "gzip" is used for almost all cases. so no need for overkill.
 
 
 
@@ -182,13 +185,12 @@ public interface HttpEntity
      * The entity tag; null if none.
      * <p>
      *     This property corresponds to the
-     *     <a href="http://tools.ietf.org/html/rfc2616#section-14.19">ETag</a> header.
+     *     <a href="http://tools.ietf.org/html/rfc7232#section-2.3">ETag</a> header.
      *     For example, if <code>entity.etag()=="123"</code>, the response will contain the header <br><br>
      *         <code style="padding-left:4em;">Entity: "123"</code>
      * </p>
      * <p>
-     *     See <a href="http://tools.ietf.org/html/rfc2616#section-3.11">RFC2616 &sect;3.11 Entity Tags</a>.
-     *     Only "strong" ETag is supported by this method. "Weak" ETag cannot be expressed by this method.
+     *     See also {@link #etagIsWeak()}.
      * </p>
      * <p>
      *     Legal chars in ETag: <code>0x21-0xFF, except 0x22(") and 0x7F(DEL)</code>.
@@ -209,6 +211,9 @@ public interface HttpEntity
      *     </li>
      * </ul>
      */
+    // maybe the default etag should be null, in a more purist view.
+    // but if last-modified is specified and etag is not, it's probably better to add an etag
+    // to augment the precision of Last-Modified header precision.
     default String etag()
     {
         return _HttpUtil.defaultEtag(lastModified(), contentEncoding());
@@ -220,6 +225,20 @@ public interface HttpEntity
     // must not contain DQUOTE; should not contain backslash
     // empty ETag is legal
 
+
+    /**
+     * Whether the etag is weak.
+     * <p>
+     *     See <a href="http://tools.ietf.org/html/rfc7232#section-2.1">rfc7232#section-2.1</a>.
+     * </p>
+     * <p>
+     *     The default implementation returns <code>false</code>.
+     * </p>
+     */
+    default boolean etagIsWeak()
+    {
+        return false;
+    }
 
 
     // ----------------------------------------------------------------------------------------------

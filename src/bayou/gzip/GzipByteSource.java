@@ -19,15 +19,8 @@ import java.util.zip.Deflater;
  */
 public class GzipByteSource implements ByteSource
 {
+    // http://tools.ietf.org/html/rfc1952
     // compressing text files: about 50MB/s (input)
-
-    // (GunzipByteSource: it is more complex, we need to parse gzip headers.
-    //    do it later. it's useful for decode gzip-ed request body. )
-
-
-    // can't use direct ByteBuffer, because currently Deflater API requires byte[].
-    // even if the API accepts ByteBuffer, using pooled direct ByteBuffer doesn't save much,
-    //   since compression is very slow anyway.
 
     SourceWrapper origin;
     int compressionLevel;
@@ -74,7 +67,7 @@ public class GzipByteSource implements ByteSource
     boolean originEof;
 
 
-    static final byte[] gzip_header = {31, -117, 8, 0, 0, 0, 0, 0, 0, 0};
+    static final byte[] gzip_header = {31, (byte)139, 8, 0, 0, 0, 0, 0, 0, (byte)255};
 
     @Override
     public Async<ByteBuffer> read() throws IllegalStateException
@@ -103,10 +96,7 @@ public class GzipByteSource implements ByteSource
 
             case gzipTrailer:
 
-                byte[] gzip_trailer = new byte[8];
-                put4(gzip_trailer, 0, crc.getValue());
-                // rfc: size of the original (uncompressed) input data modulo 2^32
-                put4(gzip_trailer, 4, deflater.getBytesRead());
+                byte[] gzip_trailer = trailer(crc.getValue(), deflater.getBytesRead());
 
                 state = State.gzipDone;
 
@@ -123,21 +113,39 @@ public class GzipByteSource implements ByteSource
         }
     }
 
+    static byte[] trailer(long crc, long size)
+    {
+        byte[] trailer = new byte[8];
+        put4(trailer, 0, crc);
+        // rfc: size of the original (uncompressed) input data modulo 2^32
+        put4(trailer, 4, size);
+        return trailer;
+    }
+
     Async<ByteBuffer> read_deflate_loop()
     {
         // in case of origin.read() error, it may be recoverable, state==reading
         return _Asyncs.scan(origin::read,
-            obb -> {
+            obb ->
+            {
                 // set input
-                // need input in byte[]. copy ByteBuffer to byte[]
-                // obb may be based on a byte[] internally, we could hack into it to use that array directly.
-                // but it won't have much saving, since compression is so slow anyway.
+                int len = obb.remaining();
+                byte[] array;
+                int off;
+                if(obb.hasArray())
+                {
+                    array = obb.array();
+                    off = obb.arrayOffset()+ obb.position();
+                }
+                else // copy obb to array. SourceWrapper ensures that each copy is not too big.
+                {
+                    array = new byte[len];
+                    obb.get(array);
+                    off = 0;
+                }
 
-                byte[] array = new byte[obb.remaining()]; // SourceWrapper guarantees that it's not too huge
-                obb.get(array);
-
-                crc.update(array);
-                deflater.setInput(array);
+                crc.update(array, off, len);
+                deflater.setInput(array, off, len);
 
                 state = State.deflating;
                 ByteBuffer result = deflate();
@@ -280,7 +288,7 @@ public class GzipByteSource implements ByteSource
 
 
 
-    // used internally. make sure read() doesn't return huge data
+    // used internally. make sure read() doesn't return huge BB that needs copy
     static class SourceWrapper implements ByteSource
     {
         ByteSource origin;
@@ -309,7 +317,7 @@ public class GzipByteSource implements ByteSource
         ByteBuffer serveHoard()
         {
             ByteBuffer result;
-            if(hoard.remaining()<=MAX)
+            if(hoard.remaining()<=MAX || hoard.hasArray())
             {
                 result = hoard;
                 hoard = null;

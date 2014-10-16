@@ -86,4 +86,13 @@ public interface HttpEntityWrapper extends HttpEntity
         return getOriginEntity().etag();
     }
 
+    /**
+     * Equivalent to <code>getOriginEntity().etagIsWeak()</code> by default.
+     */
+    @Override
+    default boolean etagIsWeak()
+    {
+        return getOriginEntity().etagIsWeak();
+    }
+
 }

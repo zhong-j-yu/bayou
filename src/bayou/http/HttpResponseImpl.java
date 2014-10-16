@@ -286,6 +286,17 @@ public class HttpResponseImpl implements HttpResponse, AutoAsync<HttpResponse>
         return this;
     }
 
+    /**
+     * Set the entity <code>"etagIsWeak"</code> property.
+     * @return this
+     * @throws NullPointerException if entity is null
+     */
+    public HttpResponseImpl entityEtagIsWeak(boolean etagIsWeak)
+    {
+        entityMod().etagIsWeak = Boolean.valueOf(etagIsWeak);
+        return this;
+    }
+
 
     static Async<HttpResponse> toAsync(HttpResponse response)
     {
