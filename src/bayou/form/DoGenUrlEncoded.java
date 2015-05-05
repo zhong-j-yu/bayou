@@ -1,7 +1,7 @@
 package bayou.form;
 
-import _bayou._tmp._CharDef;
-import _bayou._tmp._HexUtil;
+import _bayou._str._CharDef;
+import _bayou._str._HexUtil;
 
 import java.nio.charset.Charset;
 import java.util.Arrays;

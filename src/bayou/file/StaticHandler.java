@@ -1,6 +1,10 @@
 package bayou.file;
 
+import _bayou._http._HttpDate;
+import _bayou._http._HttpUtil;
 import _bayou._log._Logger;
+import _bayou._str._CharDef;
+import _bayou._str._HexUtil;
 import _bayou._tmp.*;
 import bayou.bytes.ByteSource;
 import bayou.bytes.ByteSource2InputStream;
@@ -21,7 +25,6 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static bayou.mime.Headers.Accept_Encoding;
-import static bayou.mime.Headers.Vary;
 
 /**
  * HttpHandler for static files.
@@ -475,7 +478,7 @@ public class StaticHandler implements HttpHandler
         for(int i=0; i<etag.length(); i++)
         {
             char ch = etag.charAt(i); // it is a valid etag char, ch<=0xFF
-            if(_CharDef.check((int)ch, _CharDef.Html.safeQueryChars))
+            if(_CharDef.check((int) ch, _CharDef.Html.safeQueryChars))
                 sb.append(ch);
             else if(ch==' ') // actually never true; SP is not a valid etag char.
                 sb.append('+');

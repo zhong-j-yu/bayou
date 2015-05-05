@@ -183,7 +183,7 @@ class DoSaveToTmpFile
         }
 
         this.bb = bb;
-        // usually bb is a heap buffer from NbConnection.read(), which won't be empty or too big.
+        // usually bb is a heap buffer from TcpConnection.read(), which won't be empty or too big.
         // rely on java nio to copy bb to direct buffer.
         // we could be more sophisticated - hoard small bb; copy to our direct buffer. not very important.
 

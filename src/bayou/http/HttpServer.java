@@ -69,10 +69,6 @@ import java.util.function.Supplier;
  *
  */
 
-// http version:
-//   request:  Http/1.1 or 1.0
-//   response: http version same as request
-
 // to ping self after start()
 //     new URL("http://localhost:8080/").openConnection().getInputStream().close();
 
@@ -117,9 +113,9 @@ public class HttpServer
         // app can modify tcp_conf before TcpServer start.
     }
 
-    void onConnect(TcpConnection nbConn)
+    void onConnect(TcpConnection tcpConn)
     {
-        new ImplConn(this, nbConn);
+        new ImplConn(this, tcpConn);
     }
 
 
@@ -190,13 +186,11 @@ public class HttpServer
     {
         TcpServer.Conf tcpConf = conf.tcpConf;
 
-        Supplier<Long> idGenerator = new AtomicLong(1)::getAndIncrement;
-
         TcpChannel2Connection toPlain=null;
         if(!conf.plainPorts.isEmpty())
         {
             toPlain
-                = new TcpChannel2Connection(conf.readBufferSize, conf.writeBufferSize, idGenerator);
+                = new TcpChannel2Connection(conf.readBufferSize, conf.writeBufferSize);
             Consumer<TcpChannel> handlerPlain = channHandler(toPlain, null);
             for(Integer plainPort : conf.plainPorts)
             {
@@ -208,7 +202,7 @@ public class HttpServer
         if(!conf.sslPorts.isEmpty())
         {
             SslChannel2Connection toSsl =
-                new SslChannel2Connection(false, conf.sslContext, conf.sslEngineConf, idGenerator);
+                new SslChannel2Connection(false, conf.sslContext, conf.sslEngineConf);
             Consumer<TcpChannel> handlerSsl=null;
             Consumer<TcpChannel> handlerMixed=null;
             for(Integer sslPort : conf.sslPorts)
@@ -245,10 +239,10 @@ public class HttpServer
 
         Consumer<Result<TcpConnection>> onConnResult = result ->
         {
-            TcpConnection nbConn = result.getValue();
-            if (nbConn != null)
+            TcpConnection tcpConn = result.getValue();
+            if (tcpConn != null)
             {
-                onConnect(nbConn);
+                onConnect(tcpConn);
             }
             else
             {

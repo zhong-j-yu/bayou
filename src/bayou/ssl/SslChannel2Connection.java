@@ -1,6 +1,7 @@
 package bayou.ssl;
 
 import _bayou._tmp._ByteBufferPool;
+import _bayou._tmp._Tcp;
 import bayou.async.Async;
 import bayou.async.Promise;
 import bayou.tcp.TcpChannel;
@@ -58,11 +59,9 @@ public class SslChannel2Connection
      *        the SSLContext for connections; null means the {@link javax.net.ssl.SSLContext#getDefault() default}
      * @param sslEngineConf
      *        Action to configure each SSLEngine
-     * @param idGenerator
-     *        generator for {@link bayou.tcp.TcpConnection#getId() TcpConnection id}.
      */
-    public SslChannel2Connection(boolean clientMode, SSLContext sslContext, ConsumerX<SSLEngine> sslEngineConf,
-                                 Supplier<Long> idGenerator) throws Exception
+    public SslChannel2Connection(boolean clientMode, SSLContext sslContext,
+                                 ConsumerX<SSLEngine> sslEngineConf) throws Exception
     {
         if(sslContext==null) // default context. need system properties, javax.net.ssl.keyStore etc
             sslContext = SSLContext.getDefault();
@@ -70,13 +69,10 @@ public class SslChannel2Connection
         if(sslEngineConf==null)
             sslEngineConf = engine->{}; // do nothing
 
-        if(idGenerator==null)
-            idGenerator = new AtomicLong(1)::getAndIncrement;
-
         this.clientMode = clientMode;
         this.sslContext = sslContext;
         this.sslEngineConf = sslEngineConf;
-        this.idGenerator = idGenerator;
+        this.idGenerator = _Tcp.idGenerator;
 
         // test run.
         SSLEngine engine = sslContext.createSSLEngine();

@@ -1,4 +1,6 @@
-package _bayou._tmp;
+package _bayou._str;
+
+import _bayou._tmp._Array2ReadOnlyList;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -136,4 +138,50 @@ public class _StrUtil
         String[] array = list.toArray(new String[list.size()]);
         return new _Array2ReadOnlyList<>(array);
     }
+
+
+
+
+    // string[start] is quote.
+    // return pos of closing quote, or N if not closed
+    public static int parseQuotedString(String string, int start, int N, String[] result)
+    {
+        start++; // the first char is quote. skip it
+        boolean esc=false;
+        StringBuilder sb = null;  // only needed if there's escaping
+        int i=start;
+        for( ; i<N; i++)
+        {
+            char ch = string.charAt(i);
+            if(esc)
+                esc=false;
+            else if(ch=='"')
+                break;
+            else if(ch=='\\')
+            {
+                esc=true;
+                if(sb==null)
+                    sb=new StringBuilder().append(string, start, i);
+                continue;
+            }
+
+            if(sb!=null)
+                sb.append(ch);
+        }
+        if(i==N) // no closing quote. no result
+            return N;
+
+        result[0] = (sb==null)? string.substring(start, i) : sb.toString(); // quoted string not trimmed.
+        return i;
+    }
+
+
+    public static byte[] latin1Bytes(CharSequence chars)
+    {
+        byte[] bytes = new byte[chars.length()];
+        for(int i=0; i<bytes.length; i++)
+            bytes[i] = (byte) chars.charAt(i);
+        return bytes;
+    }
+
 }

@@ -64,9 +64,26 @@ public interface TcpConnection
     long getId();
 
     /**
+     * Get the host name of the peer; or null if unknown.
+     * <p>
+     *     If the host name is unknown, this method does not lookup the host name from the peer IP.
+     * </p>
+     * <p>
+     *     See {@link TcpChannel#getPeerHost()}
+     * </p>
+     */
+    String getPeerHost();
+
+    /**
      * Get the IP address of the peer.
      */
     InetAddress getPeerIp();
+
+    /**
+     * Get the TCP port of the peer.
+     */
+    int getPeerPort();
+
 
     /**
      * Sentinel value for read(), meaning nothing is available for read at the moment.

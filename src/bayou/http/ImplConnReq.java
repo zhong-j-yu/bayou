@@ -1,9 +1,9 @@
 package bayou.http;
 
 import _bayou._tmp._Array2ReadOnlyList;
-import _bayou._tmp._HttpHostPort;
+import _bayou._http._HttpHostPort;
 import _bayou._tmp._JobTimeout;
-import _bayou._tmp._StrUtil;
+import _bayou._str._StrUtil;
 import bayou.async.Async;
 import bayou.mime.ContentType;
 import bayou.mime.HeaderMap;
@@ -70,7 +70,7 @@ class ImplConnReq
 
     void awaitReadable() // not commonly called
     {
-        Async<Void> awaitReadable = hConn.nbConn.awaitReadable(/*accepting*/true);
+        Async<Void> awaitReadable = hConn.tcpConn.awaitReadable(/*accepting*/true);
         if(timeout==null)
             timeout = new _JobTimeout(hConn.conf.requestHeadTimeout, "HttpServerConf.requestHeadTimeout");
         timeout.setCurrAction(awaitReadable);
@@ -90,7 +90,7 @@ class ImplConnReq
         ByteBuffer bb;
         try
         {
-            bb = hConn.nbConn.read();
+            bb = hConn.tcpConn.read();
         }
         catch(Exception t)
         {
@@ -120,8 +120,8 @@ class ImplConnReq
             int fieldMax = hConn.conf.requestHeadFieldMaxLength;
             int totalMax = hConn.conf.requestHeadTotalMaxLength;
             request = new ImplHttpRequest();
-            request.ip = hConn.nbConn.getPeerIp();
-            request.isHttps = hConn.nbConn instanceof SslConnection;
+            request.ip = hConn.tcpConn.getPeerIp();
+            request.isHttps = hConn.tcpConn instanceof SslConnection;
             request.certs = certs();
             parser = new ImplReqHeadParser(fieldMax, totalMax, hConn.conf.supportedMethods, request);
 
@@ -144,7 +144,7 @@ class ImplConnReq
         }
 
         if(bb.hasRemaining())
-            hConn.nbConn.unread(bb);
+            hConn.tcpConn.unread(bb);
 
         switch(parser.state)
         {
@@ -231,7 +231,11 @@ class ImplConnReq
             }
         }
 
-        ImplHttpRequestEntity reqEntity = null;
+        ImplHttpEntity reqEntity = null;
+        // CONNECT request body:
+        //   in practice, some clients set Content-Length in CONNECT requests; the most probable intention is
+        //     to workaround some intermediaries; the apparent request body is actually payload for tunneling.
+        //   we pass it as a request entity to app. if app doesn't read it, the request body will be tunneled.
         if(null!=(hv=headers.get(Headers.Transfer_Encoding)))
         {
             if(!_StrUtil.equalIgnoreCase(hv, "chunked"))
@@ -240,9 +244,10 @@ class ImplConnReq
             // later we may support "gzip, chunked"
 
             //we have a chunked entity body
-            //if Content-Length is present along with Transfer-Encoding, Content-Length is ignored
-            request.stateBody = 1;
-            request.entity = reqEntity = new ImplHttpRequestEntity(hConn, request, /*bodyLength*/null);
+            //if Content-Length is present along with Transfer-Encoding, Content-Length is ignored (must be removed)
+            headers.remove(Headers.Content_Length);
+
+            request.entity = reqEntity = new ImplHttpEntity(hConn, /*bodyLength*/null);
             // the size limit of the body will be checked when reading the body
         }
         else if(null!=(hv=headers.get(Headers.Content_Length)))
@@ -261,8 +266,7 @@ class ImplConnReq
                         "Request body length exceeds confRequestBodyMaxLength="+hConn.conf.requestBodyMaxLength);
 
             //we have a plain entity body with known length
-            request.stateBody = len>0? 1 : 3;  // special handling for len=0
-            request.entity = reqEntity = new ImplHttpRequestEntity(hConn, request, new Long(len));
+            request.entity = reqEntity = new ImplHttpEntity(hConn, new Long(len));
 
             // if this is GET/HEAD/DELETE/etc, and the request contains a spurious Content-Length:0,
             // we assign a spurious entity. ideally we should not do that, but,
@@ -283,8 +287,7 @@ class ImplConnReq
             //     Content-Type: application/x-www-form-urlencoded
             // it's a form POST with no parameters, and the client omits to send Content-Length:0
             // this does not happen in practice. whatever. we consider it an entity just in case.
-            request.stateBody = 3;
-            request.entity = reqEntity = new ImplHttpRequestEntity(hConn, request, new Long(0));
+            request.entity = reqEntity = new ImplHttpEntity(hConn, new Long(0));
         }
 
 
@@ -309,9 +312,9 @@ class ImplConnReq
         {
             if( _StrUtil.equalIgnoreCase(hv, "100-continue") )
             {
-                if(request.stateBody==1)
-                    request.state100 = 1;
-                // otherwise, stateBody is 0 or 3. request expects 100-continue, but has no/empty body.
+                if(reqEntity!=null)
+                    reqEntity.expect100(hConn, request);
+                // otherwise, request expects 100-continue, but has no body.
                 // that is very odd. maybe client screwed up. but we can't definitely call it wrong.
                 // ignore the expectation; will not respond 100. client should be ok with that.
             }
@@ -332,10 +335,10 @@ class ImplConnReq
 
     List<X509Certificate> certs()
     {
-        if(!(hConn.nbConn instanceof SslConnection))
+        if(!(hConn.tcpConn instanceof SslConnection))
             return Collections.emptyList();
 
-        SSLSession session = ((SslConnection)hConn.nbConn).getSslSession();
+        SSLSession session = ((SslConnection)hConn.tcpConn).getSslSession();
 
         Certificate[] array;
         try

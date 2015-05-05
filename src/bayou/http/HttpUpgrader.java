@@ -45,6 +45,10 @@ public interface HttpUpgrader
      *     and the connection will be killed.
      * </p>
      * <p>
+     *     If the `httpRequest` contains a body, the body should be drained first by `read()` till EOF,
+     *     before using the `tcpConnection` for new protocol.
+     * </p>
+     * <p>
      *     This method is usually invoked in a {@link Fiber} created by the http server.
      *     If upgrade is successful, that Fiber will end; a new Fiber or Fibers can be
      *     created for the continued handling of the tcp connection.

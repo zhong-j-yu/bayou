@@ -1,7 +1,7 @@
 package bayou.websocket;
 
 import _bayou._tmp._ByteBufferUtil;
-import _bayou._tmp._HexUtil;
+import _bayou._str._HexUtil;
 import _bayou._tmp._Util;
 import bayou.async.Async;
 import bayou.async.Promise;
@@ -22,16 +22,16 @@ class WebSocketInbound
 {
     final WebSocketChannelImpl chann;
     final WebSocketServerConf conf;
-    final TcpConnection nbConn;
+    final TcpConnection tcpConn;
     final WebSocketOutbound outbound;
     final ThroughputMeter throughputMeter;
 
     WebSocketInbound(WebSocketChannelImpl chann, WebSocketServer server,
-                     TcpConnection nbConn, WebSocketOutbound outbound)
+                     TcpConnection tcpConn, WebSocketOutbound outbound)
     {
         this.chann = chann;
         this.conf = server.conf;
-        this.nbConn = nbConn;
+        this.tcpConn = tcpConn;
         this.outbound = outbound;
 
         throughputMeter = new ThroughputMeter(conf.readMinThroughput, Duration.ofSeconds(10));
@@ -101,7 +101,7 @@ class WebSocketInbound
     boolean pump_retire(Object lock, final boolean graceful)
     {
         pumpState = pump_retired;
-        chann.nbConn_close(graceful);
+        chann.tcpConn_close(graceful);
         return false;
     }
 
@@ -122,7 +122,7 @@ class WebSocketInbound
         ByteBuffer bb;
         try
         {
-            bb = nbConn.read();
+            bb = tcpConn.read();
         }
         catch (Exception e)
         {
@@ -160,7 +160,7 @@ class WebSocketInbound
         lastReadTime = System.currentTimeMillis(); // not exactly; bb may come from prev unread()
 
         return handleBytes(bb);  // if false, error or stage is full, pause pump
-        // if stage full and bb is not empty, nbConn.unread(bb) has been executed.
+        // if stage full and bb is not empty, tcpConn.unread(bb) has been executed.
     }
 
 
@@ -172,7 +172,7 @@ class WebSocketInbound
         final Duration timeout;
         if(quietTime >= confPingIntervalMs)
         {
-            // NbConn has been quite (no read/write) longer than ping interval. send ping
+            // tcpConn has been quite (no read/write) longer than ping interval. send ping
             boolean pingStaged = outbound.stagePing();
             if(pingStaged)
             {
@@ -211,7 +211,7 @@ class WebSocketInbound
             {
                 pumpState = pump_awaitingReadable;
 
-                awaitReadable = nbConn.awaitReadable(/*accepting*/false);
+                awaitReadable = tcpConn.awaitReadable(/*accepting*/false);
                 if(timeout!=null)
                     awaitReadable = awaitReadable.timeout(timeout);
 
@@ -580,7 +580,7 @@ class WebSocketInbound
             // stage full; pause pump
             pumpState = pump_awaitingStage;
             if(bb.hasRemaining())
-                nbConn.unread(bb);  // we must do this before releasing lock
+                tcpConn.unread(bb);  // we must do this before releasing lock
             return false;
         }
     }

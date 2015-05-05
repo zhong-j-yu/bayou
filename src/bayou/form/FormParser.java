@@ -1,6 +1,6 @@
 package bayou.form;
 
-import _bayou._tmp._HttpUtil;
+import _bayou._http._HttpUtil;
 import bayou.async.Async;
 import bayou.bytes.ByteSource;
 import bayou.http.HttpEntity;

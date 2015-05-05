@@ -1,6 +1,6 @@
 package bayou.file;
 
-import _bayou._tmp._HttpUtil;
+import _bayou._http._HttpUtil;
 import bayou.http.HttpEntity;
 import bayou.mime.ContentType;
 import bayou.mime.FileSuffixToContentType;

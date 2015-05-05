@@ -39,16 +39,47 @@ public interface HttpHandler
      *     non-null <code>HttpResponse</code>, or an exception.
      * </p>
      * <p>
-     *     Note that <code>HttpResponseImpl</code> is a subtype of <code>Async&lt;HttpResponse&gt;</code>,
+     *     Note that {@link HttpResponseImpl} is a subtype of <code>Async&lt;HttpResponse&gt;</code>,
      *     therefore it can be returned from this method.
      * </p>
      * <p>
-     *     <code>HttpServer</code> invokes this method for any incoming request.
-     *     It's always invoked on a {@link bayou.async.Fiber fiber},
-     *     with the request as the {@link bayou.http.HttpRequest#current() fiber-local request}.
-     *     If this action fails with an exception, <code>HttpServer</code> will generate
-     *     a simple {@link HttpResponse#internalError(Throwable) internal error} response.
+     *     The response status code must not be 1xx(e.g. "100 Continue");
+     *     1xx responses are handled automatically by lower layers.
      * </p>
+     * <p>
+     *     For HttpServer handler:
+     * </p>
+     * <ul>
+     *     <li><p>
+     *         <code>handle(request)</code> is invoked for every incoming request.
+     *         It's always invoked on a {@link bayou.async.Fiber fiber},
+     *         with the request as the {@link bayou.http.HttpRequest#current() fiber-local request}.
+     *         If this action fails with an exception, <code>HttpServer</code> will generate
+     *         a simple {@link HttpResponse#internalError(Throwable) internal error} response.
+     *     </p></li>
+     *     <li><p>
+     *         request entity is not <a href="HttpEntity.html#sharable">sharable</a>;
+     *         its body can be read only once.
+     *     </p></li>
+     *     <li><p>
+     *         after <code>handle(request)</code> completes,
+     *         the request body must not be read any more.
+     *     </p></li>
+     *     <li><p>
+     *         HEAD requests can be treated the same as GET requests;
+     *         the server will not read the response entity body.
+     *     </p></li>
+     *     <li><p>
+     *         conditional GET requests can be treated the same as normal GET requests;
+     *         they are handled
+     *         {@link HttpServerConf#autoConditional(boolean) automatically} by default.
+     *     </p></li>
+     *     <li><p>
+     *         Range requests can be treated the same as normal GET requests;
+     *         they are handled
+     *         {@link HttpServerConf#autoRange(boolean) automatically} by default.
+     *     </p></li>
+     * </ul>
      */
     Async<HttpResponse> handle(HttpRequest request);
 

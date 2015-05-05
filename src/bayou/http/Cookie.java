@@ -1,16 +1,15 @@
 package bayou.http;
 
-import _bayou._tmp._CharDef;
+import _bayou._str._CharDef;
 import _bayou._tmp._Dns;
-import _bayou._tmp._HttpDate;
-import _bayou._tmp._HttpUtil;
+import _bayou._http._HttpDate;
+import _bayou._http._HttpUtil;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Objects;
 
 /**
  * Http response cookie. Modeled on <a href="http://tools.ietf.org/html/rfc6265">RFC6265</a>.
@@ -21,10 +20,9 @@ import java.util.Objects;
  *     This class is immutable.
  * </p>
  * <h4 id=properties>Cookie Properties</h4>
- * <dl>
  *
- * <dt id=name>name</dt>
- * <dd>
+ * <hr>
+ * <h4 id=name>name</h4>
  * <p>
  *     Must be non-null and non-empty. Case sensitive.
  * </p>
@@ -39,10 +37,9 @@ import java.util.Objects;
  *     Therefor to avoid confusion, the server should not create two cookies with the same name
  *     but different domain/path.
  * </p>
- * </dd>
  *
- * <dt id=value>value</dt>
- * <dd>
+ * <hr>
+ * <h4 id=value>value</h4>
  * <p>
  *     Must be non-null; can be empty. Case sensitive.
  * </p>
@@ -50,10 +47,9 @@ import java.util.Objects;
  *     Legal chars in cookie values:
  *     <code style="color:blue;font-weight:bold;">0x21-0x7E <i style="color:red">except</i> " , ; \</code>
  * </p>
- * </dd>
  *
- * <dt id=maxAge>maxAge</dt>
- * <dd>
+ * <hr>
+ * <h4 id=maxAge>maxAge</h4>
  * <p>
  *     If <code>maxAge==null</code>, this is a session cookie.
  *     See also the sentinel value {@link #SESSION Cookie.SESSION}.
@@ -67,10 +63,9 @@ import java.util.Objects;
  *     this is a persistent cookie which the client should store for the specified duration.
  *     The precision is 1 second.
  * </p>
- * </dd>
  *
- * <dt id=domain>domain</dt>
- * <dd>
+ * <hr>
+ * <h4 id=domain>domain</h4>
  * <p>
  *     If <code>domain==null</code>, the cookie only applies to the request host.
  *     For example, if the request is to <code>"http://example.com:8080/xyz"</code>,
@@ -93,7 +88,7 @@ import java.util.Objects;
  *     <code>"example.com", "s1.example.com", "s2.example.com", "a.b.c.example.com",</code> etc.
  * </p>
  * <p>
- *     The server port and the URI scheme are irrelevant when matching a cookie with a request.
+ *     The server port and the URI scheme(unless "secure=true") are irrelevant when matching a cookie with a request.
  *     For example, if the request is to <code>"http://example.com:8080"</code>,
  *     the response cookie could be applicable to a future request to
  *     <code>"https://example.com:8433"</code>.
@@ -101,10 +96,9 @@ import java.util.Objects;
  * <p>
  *     Domain is case insensitive; this class converts it to lower case.
  * </p>
- * </dd>
  *
- * <dt id=path>path</dt>
- * <dd>
+ * <hr>
+ * <h4 id=path>path</h4>
  * <p>
  *     We strongly recommend that apps always use "/" as the cookie path;
  *     then you don't need to read the following details.
@@ -133,23 +127,24 @@ import java.util.Objects;
  *     We strongly recommend that apps always use "/" as the cookie path,
  *     which matches all request URIs.
  * </p>
- * </dd>
  *
- * <dt id=secure>secure</dt>
- * <dd>
+ * <hr>
+ * <h4 id=secure>secure</h4>
  * <p>
  *     A <code>boolean</code> value.
  * </p>
- * </dd>
+ * <p>
+ *      If <code>secure==true</code>, the cookie only applies to HTTPS requests.
+ * </p>
  *
- * <dt id=httpOnly>httpOnly</dt>
- * <dd>
+ * <hr>
+ * <h4 id=httpOnly>httpOnly</h4>
  * <p>
  *     A <code>boolean</code> value.
  * </p>
- * </dd>
  *
- * </dl>
+ * <hr>
+ *
  */
 
 // http cookie, modeled on RFC 6265. (other related RFCs are obsolete)
@@ -189,8 +184,8 @@ public class Cookie
     final Duration maxAge;
     final String domain;  // null, or lower cased (for easier comparison)
     final String path;
-    boolean secure;
-    boolean httpOnly;
+    final boolean secure;
+    final boolean httpOnly;
 
 
     /**
@@ -235,6 +230,21 @@ public class Cookie
         this.httpOnly = httpOnly;
     }
 
+
+    Cookie(Cookie that, String new_domain, String new_path)
+    {
+        this.name = that.name;
+        this.value = that.value;
+        this.maxAge = that.maxAge;
+        this.secure = that.secure;
+        this.httpOnly = that.httpOnly;
+
+        // not checked!!
+        this.domain = new_domain;
+        this.path = new_path;
+    }
+
+
     /**
      * The <a href="#name">name</a> of the cookie.
      */
@@ -258,7 +268,7 @@ public class Cookie
     {
         return maxAge;
     }
-    boolean expired()
+    boolean toDelete()
     {
         return maxAge!=null && maxAge.getSeconds()<=0;
     }
@@ -299,13 +309,6 @@ public class Cookie
     }
 
 
-    boolean sameId(Cookie that)
-    {
-        return Objects.equals(this.name,   that.name)
-            && Objects.equals(this.domain, that.domain)
-            && Objects.equals(this.path,   that.path);
-    }
-
     /**
      * Convert to string, as the cookie would appear in a Set-Cookie response header.
      * <p>
@@ -335,9 +338,9 @@ public class Cookie
 
             if(seconds>0)
             {
-                sb.append("; Max-Age=").append(seconds);
                 // Max-Age is more accurate since it's relative to client clock,
                 // however it's not supported by all. so we set Expires too.
+                // arrange Max-Age after Expires in case some clients process them in lexical order.
 
                 Instant expires = Instant.now();
                 try
@@ -350,10 +353,12 @@ public class Cookie
                 }
                 // Expires only allows 4 digit year. toHttpDate() takes care of that.
                 sb.append("; Expires=").append(_HttpDate.toHttpDate(expires));
+
+                sb.append("; Max-Age=").append(seconds);
             }
             else // delete cookie
             {
-                // note: per RFC, server cannot generate a negative Max-Age (tho client must accept a negative one)
+                // note: per RFC, server cannot generate a zero or negative Max-Age (tho client must accept them)
                 // use Expires attr, with a date in the distant past to overcome server-client clock difference
                 sb.append("; Expires=").append("Fri, 21 Dec 2012 00:00:00 GMT");
             }
@@ -524,11 +529,69 @@ public class Cookie
             checkName(name);
             checkValue(value);
             if(sb.length()>0)
-                sb.append("; ");
+                sb.append(';');
             sb.append(name).append('=').append(value);
         }
         return sb.toString();
     }
+
+
+
+
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+    // whether a request host matches a cookie domain. e.g. "x.y.com" domain-matches "y.com"
+    // http://tools.ietf.org/html/rfc6265#section-5.1.3
+    // remember to remove port from requestHost.
+    // cookieDomain must have been validated
+    // both args must be in lower case
+    static boolean domainMatches(String requestHost, String cookieDomain)
+    {
+        if(!requestHost.endsWith(cookieDomain))
+            return false;
+        int r = requestHost.length()-cookieDomain.length();
+        if(r>0 && requestHost.charAt(r-1)!='.')
+            return false;
+        // requestHost must not an IP address. it's must be true here since cookieDomain is a valid domain
+        return true;
+    }
+
+
+
+
+
+    // http://tools.ietf.org/html/rfc6265#section-5.1.4
+    static boolean pathMatches(String requestPath, String cookiePath)
+    {
+        if(!requestPath.startsWith(cookiePath)) // case sensitive
+            return false;
+        // note: false==pathMatches("/abc", "/abc/")
+
+        if(requestPath.length()==cookiePath.length())
+            return true;
+
+        if(cookiePath.endsWith("/"))
+            return true;
+
+        if(requestPath.charAt(cookiePath.length())=='/')
+            return true;
+
+        return false;
+    }
+
+    // http://tools.ietf.org/html/rfc6265#section-5.1.4
+    static String defaultPath(String requestPath)
+    {
+        int iRightMostSlash = requestPath.lastIndexOf('/'); // won't be -1
+        if(iRightMostSlash==0)
+            return "/";
+        else
+            return requestPath.substring(0, iRightMostSlash);
+    }
+
 
 
 

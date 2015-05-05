@@ -1,6 +1,7 @@
 package bayou.ssl;
 
 import _bayou._tmp._ByteBufferUtil;
+import _bayou._tmp._Tcp;
 import _bayou._tmp._Util;
 import bayou.async.Async;
 import bayou.async.Promise;
@@ -128,12 +129,11 @@ class SslDetector
 
 
     static final boolean trace = false;
-    static AtomicInteger connIdGen = new AtomicInteger(0);
     int connId;
     void trace(Object... args)
     {
         if(connId==0)
-            connId = connIdGen.incrementAndGet();
+            connId = _Tcp.idGenerator.get().intValue();
 
         trace0(connId, args);
     }

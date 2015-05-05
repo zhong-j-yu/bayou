@@ -3,13 +3,28 @@ package _bayou._tmp;
 import _bayou._async._Asyncs;
 import bayou.async.Async;
 import bayou.async.Promise;
+import bayou.ssl.SslConnection;
 import bayou.tcp.TcpChannel;
+import bayou.tcp.TcpConnection;
 
 import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 
 public class _Tcp
 {
+
+    public static int[] defaultSelectorIds()
+    {
+        int N = Runtime.getRuntime().availableProcessors();
+        int[] ids = new int[N];
+        for(int i=0; i<N; i++)
+            ids[i] = i;
+        return ids;
+    }
+
+
     public static void validate_confSelectorIds(int[] confSelectorIds) throws IllegalArgumentException
     {
         _Util.require(confSelectorIds.length>0, "confSelectorIds.length>0");
@@ -94,4 +109,65 @@ public class _Tcp
         else
             return _Asyncs.succeed(promise, null);
     }
+
+    // global id generator for all connections
+    public static final Supplier<Long> idGenerator = new AtomicLong(1)::getAndIncrement;
+
+
+    public static Async<Void> writeFlush(TcpConnection conn)
+    {
+        try
+        {
+            conn.write();
+        }
+        catch (Exception e)
+        {
+            return Async.failure(e);
+        }
+
+        if(conn.getWriteQueueSize()>0)
+            return conn.awaitWritable().then(v->writeFlush(conn));
+
+        return Async.VOID;
+    }
+
+
+    // read exactly n bytes
+    public static Async<byte[]> read(TcpConnection conn, int n)
+    {
+        assert n>0;
+        return read(conn, new byte[n], 0);
+    }
+    static Async<byte[]> read(TcpConnection conn, byte[] bytes, int i)
+    {
+        ByteBuffer bb;
+        try
+        {
+            bb = conn.read();
+            if(bb==TcpConnection.TCP_FIN || bb== SslConnection.SSL_CLOSE_NOTIFY)
+                throw new Exception("premature EOF");
+        }
+        catch (Exception e)
+        {
+            return Async.failure(e);
+        }
+        if(bb==TcpConnection.STALL)
+            return await_read(conn, bytes, i);
+
+        while(i<bytes.length && bb.hasRemaining())
+            bytes[i++] = bb.get();
+
+        if(i<bytes.length)
+            return await_read(conn, bytes, i);
+
+        if(bb.hasRemaining())
+            conn.unread(bb);
+
+        return Async.success(bytes);
+    }
+    static Async<byte[]> await_read(TcpConnection conn, byte[] bytes, int i)
+    {
+        return conn.awaitReadable(false).then(v->read(conn, bytes, i));
+    }
+
 }

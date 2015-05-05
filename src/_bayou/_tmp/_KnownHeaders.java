@@ -1,5 +1,7 @@
 package _bayou._tmp;
 
+import _bayou._str._ChArrCi;
+import _bayou._str._StrCi;
 import bayou.mime.Headers;
 
 import java.lang.reflect.Field;
@@ -26,7 +28,7 @@ public class _KnownHeaders
             try{ s = (String)field.get(null); } catch(Exception e){ throw new AssertionError(e); }
 
             map0.put(s, s);
-            _ChArrCi k1 = new _ChArrCi(s.toCharArray(), s.length());
+            _ChArrCi k1 = new _ChArrCi(s.toCharArray());
             map1.put(k1, s);
             _StrCi k2 = new _StrCi(s);
             map2.put(k2, s);
@@ -35,7 +37,7 @@ public class _KnownHeaders
     // look up a well-known header. chars may be in different cases.
     public static String lookup(char[] chars, int length)
     {
-        _ChArrCi k1 = new _ChArrCi(chars, length);
+        _ChArrCi k1 = new _ChArrCi(chars, 0, length);
         return map1.get(k1);
     }
     public static String lookup(String s)

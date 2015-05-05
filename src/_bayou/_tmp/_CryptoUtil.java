@@ -1,6 +1,8 @@
 package _bayou._tmp;
 
 
+import _bayou._str._HexUtil;
+
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;

@@ -1,4 +1,4 @@
-package _bayou._tmp;
+package _bayou._str;
 
 public class _CharDef
 {
@@ -49,7 +49,7 @@ public class _CharDef
             mark(set, i);
         return set;
     }
-    static long[] plus(long[] set0, long[]... sets)
+    public static long[] plus(long[] set0, long[]... sets)
     {
         set0 = set0.clone();
         for(long[] set : sets)
@@ -93,7 +93,7 @@ public class _CharDef
         // really loose, everything except CR LF
     }
 
-    public static class Uri // RFC 3986
+    public static class Rfc3986 // RFC 3986
     {
         // all chars that can appear legally in a uri, including %
         public static final long[] legalChars = set(
@@ -112,12 +112,22 @@ public class _CharDef
         // queryChars also contain all path chars, so queryChars=pathQueryChars
         // fragment chars are identical to query chars
     }
+    public static class UriLoose // allow more octets in URI path and query. 0x21-0xFF
+    {
+        // all chars that can appear in a uri, including % and #
+        public static final long[] legalChars = range(0x21, 0xFF);
+
+        public static final long[] pathChars =  minus(legalChars, set("%#?"));
+        public static final long[] queryChars = minus(legalChars, set("%#"));
+        // queryChars also contain all path chars, so queryChars=pathQueryChars
+        // fragment chars are identical to query chars
+    }
 
     public static class Html  // 4.01
     {
         // in application/x-www-form-urlencoded chars that need no escaping.
         // we are looser than spec, it's ok to not escape :/?@!$'()*,;
-        public static final long[] safeQueryChars = minus( Uri.queryChars, set("+&="));
+        public static final long[] safeQueryChars = minus( Rfc3986.queryChars, set("+&="));
     }
 
     public static class Http   // RFC 2616
@@ -126,7 +136,7 @@ public class _CharDef
         public static final long[] tokenChars = set(a_zA_Z0_9, "!#$%&'*+-.^_`|~");
 
         // fragment is not allowed
-        public static final long[] reqUriChars = minus(Uri.legalChars, set("#"));
+        public static final long[] reqUriChars = minus(UriLoose.legalChars, set("#"));
 
         public static final long[] versionChars = set("HTTP/.0123456789");
 

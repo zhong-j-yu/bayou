@@ -60,7 +60,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *     However, applications often have customized executors.
  *     For example, {@link bayou.http.HttpServer HttpServer}
  *     creates a fiber for each http connection, using
- *     {@link bayou.tcp.TcpConnection#getExecutor() NbConnection's executor}
+ *     {@link bayou.tcp.TcpConnection#getExecutor() TcpConnection's executor}
  *     which dispatches tasks to the selector thread of the connection.
  *     Another example, if you use Async in Swing, you may consider an executor based on
  *     {@link java.awt.EventQueue#invokeLater(Runnable) EventQueue::invokeLater}.

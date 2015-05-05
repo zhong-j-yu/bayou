@@ -1,12 +1,12 @@
 package bayou.form;
 
+import _bayou._http._SimpleRequestEntity;
 import _bayou._tmp._Exec;
 import _bayou._tmp._Util;
 import bayou.async.Async;
 import bayou.http.HttpEntity;
 import bayou.http.HttpRequest;
 import bayou.http.HttpRequestImpl;
-import bayou.http.SimpleHttpEntity;
 import bayou.mime.ContentType;
 import bayou.util.OverLimitException;
 
@@ -58,7 +58,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
  * <pre>
  *     new FormData("POST", "http://localhost:8080/submit")
  *         .param("n1", "v1")
- *         .file(""f1", "/tmp/100.txt")
+ *         .file("f1", "/tmp/100.txt")
  *         .toRequest();
  * </pre>
  */
@@ -69,7 +69,7 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 public class FormData
 {
     /**
-     * The <code>"multipart/form-data"</code> enctype. This is the recommended enctype for any form.
+     * The <code>"multipart/form-data"</code> enctype. This is the recommended enctype.
      */
     public static final String ENC_MULTIPART = "multipart/form-data";
 
@@ -82,7 +82,7 @@ public class FormData
 
 
     String method; // GET/POST only
-    String action;    // see HttpRequestImpl#uri-arg
+    String action;    // absolute or path-query
     Charset charset;  // should be ASCII-compatible.
     String enctype;   // ignored for GET
 
@@ -90,11 +90,14 @@ public class FormData
      * Create a FormData.
      * <p>
      *     The method must be "GET" or "POST".
-     *     The action can be <a href="../http/HttpRequestImpl.html#uri-arg">a full or partial URI</a>.
+     *     The action must be an {@link bayou.http.HttpRequest#absoluteUri() absolute URI}
+     *     or {@link bayou.http.HttpRequest#uri() path-query}.
      *     For example
      * </p>
      * <pre>
-     *     new FormData("GET", "http://example.com/page1") ...
+     *     new FormData("GET", "https://example.com/search")
+     *
+     *     new FormData("POST", "/submit")
      * </pre>
      * <p>
      *     This constructor sets <code>charset=UTF-8, enctype="multipart/form-data"</code>.
@@ -126,8 +129,15 @@ public class FormData
     /**
      * The form's action.
      * <p>
-     *     The action can be <a href="../http/HttpRequestImpl.html#uri-arg">a full or partial URI</a>.
+     *     The action is an {@link bayou.http.HttpRequest#absoluteUri() absolute URI}
+     *     or {@link bayou.http.HttpRequest#uri() path-query},
+     *     for example
      * </p>
+     * <pre>
+     *     "https://example.com/search"
+     *
+     *     "/submit"
+     * </pre>
      */
     public String action()
     {
@@ -316,7 +326,7 @@ public class FormData
      * <p>
      *     The enctype must be either <code>"multipart/form-data"</code>
      *     or <code>"application/x-www-form-urlencoded"</code>.
-     *     We recommend <code>"multipart/form-data"</code> for any form.
+     *     We recommend <code>"multipart/form-data"</code> for all forms.
      * </p>
      * @return this
      * @see #ENC_MULTIPART
@@ -434,7 +444,7 @@ public class FormData
      *     // return "/submit?n=v"
      * </pre>
      * <p>
-     *     The form's <code>method/enctype</code> are irrelevant here.
+     *     The form's <code>method</code> and <code>enctype</code> are irrelevant here.
      * </p>
      */
     public String toUri()
@@ -455,7 +465,7 @@ public class FormData
     /**
      * Create an http request that submits the form data.
      * <p>
-     *     The request method is the same as the form method.
+     *     The request method is the same as the form's {@link #method() method}.
      * </p>
      * <p>
      *     If the method is GET, the form data is encoded in request URI, see {@link #toUri()}.
@@ -467,18 +477,22 @@ public class FormData
      *     Example usage:
      * </p>
      * <pre>
-     *     new FormData("GET", "/show").params("a", 1, 2)
-     *         .toRequest().host("localhost:8080");
+     *     new FormData("GET", "/show")
+     *         .params("a", 1, 2)
+     *         .toRequest()
+     *         .host("localhost:8080");
      *
-     *     new FormData("POST", "http://example.com/submit").params("a", 1, 2)
-     *         .toRequest().header("Origin", "http://example.com");
+     *     new FormData("POST", "http://example.com/submit")
+     *         .params("a", 1, 2)
+     *         .toRequest()
+     *         .header("Origin", "http://example.com");
      * </pre>
      * <p>
-     *     The return value is an {@link HttpRequestImpl} to which the caller can make further modifications.
+     *     The caller can make further modifications to the returned {@link HttpRequestImpl} object.
      * </p>
      * <p>
-     *     If the form's action is a <a href="../http/HttpRequestImpl.html#uri-arg-partial">partial uri</a>,
-     *     the caller may want to set the request host.
+     *     If the form's {@link #action()} is not an absolute URI,
+     *     the caller should set the request {@link bayou.http.HttpRequestImpl#host(String) host} afterwards.
      * </p>
      * <p>
      *     To avoid a POST request being
@@ -507,7 +521,7 @@ public class FormData
 
         DoGenUrlEncoded enc = new DoGenUrlEncoded(charset, parameters, files);
         ByteBuffer bb = ByteBuffer.wrap(enc.bytes, 0, enc.ib);
-        return new SimpleHttpEntity(contentTypeUrlEncoded, bb);
+        return new _SimpleRequestEntity(contentTypeUrlEncoded, bb);
     }
 
 

@@ -1,6 +1,6 @@
 package bayou.http;
 
-import _bayou._tmp._CharDef;
+import _bayou._str._CharDef;
 
 import java.util.HashMap;
 
@@ -30,12 +30,12 @@ public class HttpStatus
 
     /**
      * Create an HttpStatus instance.
-     * @param code the Status-Code. required: <code>100&lt;=code&lt;=999</code>
+     * @param code the Status-Code. required: <code>100&lt;=code&lt;=599</code>
      * @param phrase the Reason-Phrase
      */
     public HttpStatus(int code, String phrase)
     {
-        if(code<100 || code>999)  // must be 3 digits
+        if(code<100 || code>599)  // http://tools.ietf.org/html/rfc7231#section-6
             throw new IllegalArgumentException("illegal status code");
 
         if(!_CharDef.check(phrase, _CharDef.Http.reasonPhraseChars))
@@ -44,6 +44,14 @@ public class HttpStatus
         this.code = code;
         this.phrase = phrase;
         this.string = ""+code+" "+phrase.trim();
+    }
+
+    // for internal use
+    HttpStatus(int code, String phrase, int _ignore)
+    {
+        this.code = code;
+        this.phrase = phrase;
+        this.string = ""+code+" "+phrase;
     }
 
     /**
@@ -147,6 +155,9 @@ public class HttpStatus
 
     static public final HttpStatus c307_Temporary_Redirect
                   = dfResponseStatus(307, "Temporary Redirect");
+
+    static public final HttpStatus c308_Permanent_Redirect
+                  = dfResponseStatus(308, "Permanent Redirect");
 
     static public final HttpStatus c400_Bad_Request
                   = dfResponseStatus(400, "Bad Request");

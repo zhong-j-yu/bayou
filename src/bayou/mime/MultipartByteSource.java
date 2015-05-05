@@ -1,7 +1,7 @@
 package bayou.mime;
 
 import _bayou._tmp._ByteBufferUtil;
-import _bayou._tmp._CharDef;
+import _bayou._str._CharDef;
 import _bayou._tmp._StreamIter;
 import _bayou._tmp._Util;
 import bayou.async.Async;

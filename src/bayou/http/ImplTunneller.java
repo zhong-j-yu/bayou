@@ -1,8 +1,11 @@
 package bayou.http;
 
+import _bayou._http._HttpDate;
+import _bayou._http._HttpHostPort;
+import _bayou._http._HttpUtil;
+import _bayou._str._CharSeqSaver;
 import _bayou._tmp.*;
 import bayou.async.Async;
-import bayou.async.Fiber;
 import bayou.mime.HeaderMap;
 import bayou.mime.Headers;
 import bayou.ssl.SslConnection;
@@ -18,9 +21,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.concurrent.Executor;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
-import java.util.function.Supplier;
 
 // tunnel:  http://tools.ietf.org/html/rfc7230#section-2.3
 // CONNECT: http://tools.ietf.org/html/rfc7231#section-4.3.6
@@ -39,8 +40,7 @@ class ImplTunneller
 
         this.highMark = conf.outboundBufferSize;
 
-        Supplier<Long> idGenerator = new AtomicLong(1)::getAndIncrement;
-        chann2conn = new TcpChannel2Connection(conf.readBufferSize, conf.writeBufferSize, idGenerator);
+        chann2conn = new TcpChannel2Connection(conf.readBufferSize, conf.writeBufferSize);
 
         int[] selectorIds = conf.get_selectorIds();
         clients = new TcpClient[selectorIds.length];
@@ -65,7 +65,9 @@ class ImplTunneller
     {
         assert request.method.equals("CONNECT");
         if(response.statusCode()/100!=2) // not 2xx
-            return HttpResponseImpl.toAsync(response);
+            return _HttpUtil.toAsync(response);
+
+        // if the CONNECT request has a body, and it's not read by app, it becomes tunnel payload.
 
         // it's ok to CONNECT to self, i.e. target ip:port = self ip:port. probably not happening in practice.
         // in that case, we don't need to spawn a new connect to self; just reuse this connection.
@@ -92,7 +94,7 @@ class ImplTunneller
     {
         TcpClient client = clients[0];
         // prefer client associated with the current selector thread
-        Executor exec = ic.nbConn.getExecutor();
+        Executor exec = ic.tcpConn.getExecutor();
         for(TcpClient c : clients)
         {
             if(c.getExecutor()==exec)
@@ -106,7 +108,7 @@ class ImplTunneller
         return asyncChann.then(chann ->
         {
             ic.tunnelConn = chann2conn.convert(chann);
-            return HttpResponseImpl.toAsync(response);
+            return _HttpUtil.toAsync(response);
             // later, ImplConn invokes doTunnel()
         });
     }
@@ -160,7 +162,7 @@ class ImplTunneller
             headers.put(name, value);
         }
 
-        // no response body for CONNECT
+        // no response body for CONNECT. ignore appResponse.entity().
         headers.remove(Headers.Content_Length);  // in case app set it
         headers.remove(Headers.Transfer_Encoding);   // in case app set it
 

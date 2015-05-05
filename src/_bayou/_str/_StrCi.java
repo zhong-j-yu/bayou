@@ -1,4 +1,4 @@
-package _bayou._tmp;
+package _bayou._str;
 
 // case insensitive wrapper of String
 public final class _StrCi

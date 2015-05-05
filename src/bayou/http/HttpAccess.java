@@ -1,6 +1,6 @@
 package bayou.http;
 
-import _bayou._tmp._StrUtil;
+import _bayou._str._StrUtil;
 import bayou.mime.Headers;
 
 import java.text.SimpleDateFormat;
@@ -102,7 +102,7 @@ public class HttpAccess
         sb.append(" - - [");
         sb.append(date);
         sb.append("] \"");
-        sb.append(req.method()).append(' ').append(req.uri()).append(' ').append(req.httpVersion());
+        sb.append(req.method()).append(' ').append(req.uri()).append(" HTTP/").append(req.httpVersion());
         // request uri does not contain " or \ therefore we don't need to worry about escaping them
         sb.append("\" ");
         sb.append(response.status().code);

@@ -1,9 +1,9 @@
 package bayou.websocket;
 
-import _bayou._tmp._HttpHostPort;
-import _bayou._tmp._HttpUtil;
+import _bayou._http._HttpHostPort;
+import _bayou._http._HttpUtil;
 import _bayou._tmp._Array2ReadOnlyList;
-import _bayou._tmp._StrUtil;
+import _bayou._str._StrUtil;
 import bayou.http.HttpRequest;
 import bayou.http.HttpRequestImpl;
 import bayou.mime.Headers;
@@ -218,6 +218,7 @@ public class WebSocketRequest
         if(httpRequest.entity()!=null)
             throw new IllegalArgumentException("webSocket handshake request must not contain a body");
         // if request has a body we'll have to drain it first before reading inbound websocket frames.
+        // rfc seems to allow a body in the request, but it's highly unlikely in any client impl.
 
         Map<String,String> headers = httpRequest.headers();
 

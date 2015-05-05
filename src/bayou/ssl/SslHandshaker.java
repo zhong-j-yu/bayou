@@ -1,6 +1,7 @@
 package bayou.ssl;
 
 import _bayou._tmp._ByteBufferPool;
+import _bayou._tmp._Tcp;
 import bayou.async.Async;
 import bayou.async.Promise;
 import bayou.tcp.TcpChannel;
@@ -380,7 +381,7 @@ class SslHandshaker
                 // leftover client bytes, hand it over to connection. this is common.
                 // for example, with resumed handshake on a new connection, browser
                 // sends the last handshake msg and the http request in one batch.
-                if(trace)trace("readBuffer leftover, handover to SslNbConnection");
+                if(trace)trace("readBuffer leftover, handover to SslConnectionImpl");
                 sslConn.peerNetBuffer = readBuffer; // for get
                 readBuffer=null;
                 sslConn.needMorePeerBytes = false; // check leftover before reading more net data
@@ -456,12 +457,11 @@ class SslHandshaker
 
 
     static final boolean trace = false;
-    static AtomicInteger connIdGen = new AtomicInteger(0);
     int connId;
     void trace(Object... args)
     {
         if(connId==0)
-            connId = connIdGen.incrementAndGet();
+            connId = _Tcp.idGenerator.get().intValue();
 
         trace0(connId, args);
     }

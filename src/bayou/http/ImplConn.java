@@ -3,7 +3,6 @@ package bayou.http;
 import _bayou._tmp._TrafficDumpWrapper;
 import _bayou._tmp._Util;
 import bayou.async.Async;
-import bayou.async.AsyncIterator;
 import bayou.async.Fiber;
 import bayou.async.Promise;
 import bayou.mime.Headers;
@@ -21,21 +20,21 @@ class ImplConn
 {
     HttpServer server;
     HttpServerConf conf;
-    TcpConnection nbConn;
+    TcpConnection tcpConn;
     Promise<Void> promise;
 
     _TrafficDumpWrapper dump;
 
-    ImplConn(HttpServer server, TcpConnection nbConn)
+    ImplConn(HttpServer server, TcpConnection tcpConn)
     {
         this.server = server;
         this.conf = server.conf;
-        this.nbConn = nbConn;
+        this.tcpConn = tcpConn;
 
         this.dump = conf.trafficDumpWrapper;
 
         if(dump!=null)
-            dump.print(connId(), " open [", nbConn.getPeerIp().getHostAddress(), "] ==\r\n");
+            dump.print(connId(), " open [", tcpConn.getPeerIp().getHostAddress(), "] ==\r\n");
 
         startFiber(); // do that in a named method, to have a better fiber trace.
     }
@@ -43,7 +42,7 @@ class ImplConn
     void startFiber()
     {
         // all code are run in this fiber.
-        new Fiber<Void>(nbConn.getExecutor(), fiberName(null), ()->
+        new Fiber<Void>(tcpConn.getExecutor(), fiberName(null), ()->
         {
             promise = new Promise<>();
             promise.fiberTracePop();
@@ -171,7 +170,7 @@ class ImplConn
         //
         // connection is ok, we play nice and try to write back some error message.
         // usually, before writing the response, we should drain the request. but we can't trust the
-        // request framing here. so we don't do that. can't drain raw bytes from nbConn either since
+        // request framing here. so we don't do that. can't drain raw bytes from tcpConn either since
         // we can't expect an EOF. so we just imm write the response. since the error response is small,
         // write should succeed, even if client isn't reading. server then drain inbound. if client is
         // still writing, the drain process helps client to finish the write step. client then probably
@@ -230,7 +229,7 @@ class ImplConn
         Async<HttpResponse> upgradeAsync;
         try
         {
-            upgradeAsync = upgrader.tryUpgrade(request, nbConn); // should not throw
+            upgradeAsync = upgrader.tryUpgrade(request, tcpConn); // should not throw
             if(upgradeAsync==null)
                 upgradeAsync = Async.success((HttpResponse)null);
         }
@@ -293,6 +292,7 @@ class ImplConn
 
         if(request.method.equals("CONNECT"))
             respAsync = respAsync.then( resp->server.tunneller.tryConnect(request, resp, this) );
+        // if the CONNECT request has a body, and it's not read by app, it becomes tunnel payload.
 
         Result<? extends HttpResponse> respResult = respAsync.pollResult();
         if(respResult!=null) // immediate completion is quite common
@@ -322,8 +322,15 @@ class ImplConn
 
     Goto startResponding()
     {
-
         // we may need to drain request body before writing the response
+        if(request.entity==null) // common
+            return doWriteResp();
+
+        ImplHttpEntity.Body body = request.entity.body; // non-null
+
+        // forbid app from reading request body from here,
+        // otherwise there's concurrency and semantic problems if we drain request body here.
+        body.close();
 
         if(request.state100==2) // we tried to write "100 Continue", write failed
             return close(null, "failed to write 100-continue response", null);
@@ -334,8 +341,8 @@ class ImplConn
         {
             if(tunnelConn!=null)
             {
-                return drainReqBodyThenWriteResp();
-                // CONNECT request with body and Expect:100-continue.
+                return drainReqBodyThenWriteResp(body);
+                // CONNECT request with body and Expect:100-continue. (entity!=null)
                 // this is highly unlikely in practice.
                 // we must drain the request body before tunneling.
             }
@@ -353,31 +360,23 @@ class ImplConn
 
         // state100 == 0 or 3.
 
-        if(request.stateBody==0 || request.stateBody==3) // most common. no body, or body is drained.
+        if(body.eof()) // common
             return doWriteResp();
-
-        // stateBody == 1 or 2
 
         // drain request body, then write resp
 
-        return drainReqBodyThenWriteResp();
+        return drainReqBodyThenWriteResp(body);
 
         // note: if state100==3, we still want to drain request body, in case client is single threaded.
     }
 
-    private Goto drainReqBodyThenWriteResp()
+    private Goto drainReqBodyThenWriteResp(ImplHttpEntity.Body body)
     {
-        ImplHttpRequestEntity entity = (ImplHttpRequestEntity)request.entity;
-        final ImplHttpRequestEntity.Body body = entity.getBodyInternal();
-        body.closed = false; // user may closed the body. clear it so we can read().
-
-        // note: each body.read() will check confClientUploadTimeout, throughput, max body length
-        Async<Void> drainAsync = AsyncIterator.forEach(body::read, input -> {}) // simply discard
-            .timeout(conf.drainRequestTimeout);
-        // after drain, body.closed stays true. ideally we should reset it to previous value.
-        // no big deal, since soon we'll set request.responded, which will prevent body read.
-
-        drainAsync.onCompletion(drainResult -> jump(afterReqBodyDrain(drainResult)));
+        body
+            .drain()
+            .timeout(conf.drainRequestTimeout)
+            .onCompletion(drainResult -> jump(afterReqBodyDrain(drainResult)))
+        ;
         return Goto.NA;
     }
     Goto afterReqBodyDrain(Result<Void> drainResult)
@@ -398,7 +397,7 @@ class ImplConn
     {
         if(tunnelConn!=null)
         {
-            server.tunneller.doTunnel(this, nbConn, tunnelConn);
+            server.tunneller.doTunnel(this, tcpConn, tunnelConn);
 
             request = null;
             response = null;
@@ -407,9 +406,6 @@ class ImplConn
             promise.succeed(null); // this fiber ends
             return Goto.NA;
         }
-
-        // forbid reading request body from here on.
-        request.responded = true;
 
         try
         {
@@ -476,7 +472,7 @@ class ImplConn
     {
         // typically client doesn't do pipeline, so it's unlikely connection is readable here.
         //   an imm read() at this point probably will fail, so we better awaitReadable() here.
-        Async<Void> awaitReadable = nbConn.awaitReadable(/*accepting*/true);
+        Async<Void> awaitReadable = tcpConn.awaitReadable(/*accepting*/true);
         Result<Void> awaitReadableResult = awaitReadable.pollResult();
         if(awaitReadableResult==null) // more common
         {
@@ -491,7 +487,7 @@ class ImplConn
 
             // likely due to a prev unread() because of request pipelining.
             // to be fair to other connections, yield, do not goto reqNew directly.
-            // note: even if sever is not accepting, the buffered data in nbConn is still accepted here
+            // note: even if sever is not accepting, the buffered data in tcpConn is still accepted here
             Fiber.current().getExecutor().execute(() ->
                 jump(Goto.reqNew));
             return Goto.NA;
@@ -557,8 +553,8 @@ class ImplConn
             tunnelConn=null;
         }
 
-        Async<Void> closing = nbConn.close(drainTimeout);
-        nbConn =null;
+        Async<Void> closing = tcpConn.close(drainTimeout);
+        tcpConn =null;
 
         if(closing.isCompleted()) // not rare
             promise.complete(closing.pollResult());
@@ -574,16 +570,16 @@ class ImplConn
 
     String connId()
     {
-        return "== "+((nbConn instanceof SslConnection)?"https":"http")+" connection #"+nbConn.getId();
+        return "== "+((tcpConn instanceof SslConnection)?"https":"http")+" connection #"+ tcpConn.getId();
     }
 
     String fiberName(HttpRequest request)
     {
-        InetAddress ip = request!=null? request.ip() : nbConn.getPeerIp();
+        InetAddress ip = request!=null? request.ip() : tcpConn.getPeerIp();
 
         StringBuilder sb = new StringBuilder();
-        sb.append((nbConn instanceof SslConnection)?"https":"http")
-            .append(" connection #").append(nbConn.getId())
+        sb.append((tcpConn instanceof SslConnection)?"https":"http")
+            .append(" connection #").append(tcpConn.getId())
             .append(" [").append(ip.getHostAddress()).append("]");
         if(request!=null)
         {
@@ -599,10 +595,10 @@ class ImplConn
 
     String reqId()
     {
-        return "== request #"+nbConn.getId()+"-"+reqId+" ==\r\n";
+        return "== request #"+ tcpConn.getId()+"-"+reqId+" ==\r\n";
     }
     String respId()
     {
-        return "== response #"+nbConn.getId()+"-"+reqId+" ==\r\n";
+        return "== response #"+ tcpConn.getId()+"-"+reqId+" ==\r\n";
     }
 }

@@ -1,6 +1,6 @@
 package bayou.http;
 
-import _bayou._tmp._HttpUtil;
+import _bayou._http._HttpUtil;
 
 class RequestTarget
 {

@@ -1,4 +1,4 @@
-package _bayou._tmp;
+package _bayou._http;
 
 import java.time.Instant;
 import java.util.Calendar;
@@ -25,7 +25,7 @@ public class _HttpDate
   //static final char[] templateB = c("Xxx, 00-Xxx-0000 00:00:00 GMT");
     static final char[][] DAYS = {c("   "),
             c("Sun"), c("Mon"), c("Tue"), c("Wed"), c("Thu"), c("Fri"), c("Sat")};
-    static final char[][] MONTHS = {
+    public static final char[][] MONTHS = {
             c("Jan"), c("Feb"), c("Mar"), c("Apr"), c("May"), c("Jun"),
             c("Jul"), c("Aug"), c("Sep"), c("Oct"), c("Nov"), c("Dec")};
 
@@ -72,11 +72,17 @@ public class _HttpDate
         return new String(chars);
     }
 
-    // requires that string is rfc1123-date.
-    // won't work if string is in other 2 obsolete formats; may return false negative.
     public static boolean match(Instant instant, String string)
     {
-        return _StrUtil.equalIgnoreCase(toHttpDate(instant), string);
+        Instant instant2 = parse(string);
+        if(instant2==null) return false;
+        return instant.getEpochSecond() == instant2.getEpochSecond();
+    }
+    // return null if fails
+    public static Instant parse(String string)
+    {
+        // loose parse, accept 3 formats in http://tools.ietf.org/html/rfc7231#section-7.1.1.1
+        return _Rfc6265.parseDate(string);
     }
 
     static void i2c(char[] chars, int pos, int i)

@@ -1,5 +1,6 @@
 package _bayou._tmp;
 
+import _bayou._str._CharDef;
 import bayou.async.Async;
 
 import java.net.InetAddress;
@@ -42,8 +43,14 @@ public class _Dns
 
     public static Async<InetAddress> resolve(String domain)
     {
+        // see if it's IP literal
+        InetAddress x = _Ip.toInetAddress(domain);
+        if(x!=null)
+            return Async.success(x);
+
         return Async.execute( ()->InetAddress.getByName(domain) );
         // this will spawn a new thread
+
         // todo: actual async dns impl
     }
 

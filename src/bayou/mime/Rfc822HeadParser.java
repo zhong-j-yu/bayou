@@ -1,7 +1,8 @@
 package bayou.mime;
 
-import _bayou._tmp._CharDef;
-import _bayou._tmp._HexUtil;
+import _bayou._str._CharDef;
+import _bayou._tmp._ControlException;
+import _bayou._str._HexUtil;
 import _bayou._tmp._KnownHeaders;
 import bayou.util.OverLimitException;
 
@@ -86,14 +87,14 @@ class Rfc822HeadParser
     }
 
     // control exceptions. we don't expect them to be thrown in typical scenarios.
-    static public class NeedMoreBytes extends Exception
+    static public class NeedMoreBytes extends _ControlException
     {
-        private NeedMoreBytes(){ super("need more bytes", null, false, false); }
+        private NeedMoreBytes(){ super("need more bytes"); }
         static final NeedMoreBytes instance = new NeedMoreBytes();
     }
-    static public class FieldTooLong extends Exception
+    static public class FieldTooLong extends _ControlException
     {
-        private FieldTooLong(){ super("field too long", null, false, false); }
+        private FieldTooLong(){ super("field too long"); }
         static final FieldTooLong instance = new FieldTooLong();
     }
 

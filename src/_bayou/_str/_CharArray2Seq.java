@@ -1,4 +1,4 @@
-package _bayou._tmp;
+package _bayou._str;
 
 // wrap char[] as CharSequence
 public class _CharArray2Seq implements CharSequence

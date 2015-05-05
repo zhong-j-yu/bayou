@@ -1,6 +1,6 @@
 package bayou.mime;
 
-import _bayou._tmp._StrUtil;
+import _bayou._str._StrUtil;
 
 import java.util.*;
 
@@ -219,7 +219,7 @@ public class TokenParams
             if(i<N && string.charAt(i)=='"') // quoted string. ended by closing quote
             {
                 String[] result = {null};
-                j = parseQuotedString(string, i, N, result);  // quoted string not trimmed
+                j = _StrUtil.parseQuotedString(string, i, N, result);  // quoted string not trimmed
                 if(j==N) // no closing quote. no result
                     return N;
                 value = result[0];
@@ -252,39 +252,5 @@ public class TokenParams
         }
         return i;  // i<=N
     }
-
-    // string[start] is quote.
-    // return pos of closing quote, or N if not closed
-    static int parseQuotedString(String string, int start, int N, String[] result)
-    {
-        start++; // the first char is quote. skip it
-        boolean esc=false;
-        StringBuilder sb = null;  // only needed if there's escaping
-        int i=start;
-        for( ; i<N; i++)
-        {
-            char ch = string.charAt(i);
-            if(esc)
-                esc=false;
-            else if(ch=='"')
-                break;
-            else if(ch=='\\')
-            {
-                esc=true;
-                if(sb==null)
-                    sb=new StringBuilder().append(string, start, i);
-                continue;
-            }
-
-            if(sb!=null)
-                sb.append(ch);
-        }
-        if(i==N) // no closing quote. no result
-            return N;
-
-        result[0] = (sb==null)? string.substring(start, i) : sb.toString(); // quoted string not trimmed.
-        return i;
-    }
-
 
 }

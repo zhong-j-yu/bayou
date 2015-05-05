@@ -1,6 +1,6 @@
 package bayou.form;
 
-import _bayou._tmp._HexUtil;
+import _bayou._str._HexUtil;
 import bayou.async.Async;
 import bayou.async.AsyncIterator;
 import bayou.bytes.ByteSource;

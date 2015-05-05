@@ -21,22 +21,22 @@ class WebSocketOutbound
 {
     final WebSocketChannelImpl chann;
     final WebSocketServerConf conf;
-    final TcpConnection nbConn;
+    final TcpConnection tcpConn;
     final ThroughputMeter throughputMeter;
 
     WebSocketOutbound(WebSocketChannelImpl chann, WebSocketServer server,
-                      TcpConnection nbConn, ByteBuffer handshakeResponse)
+                      TcpConnection tcpConn, ByteBuffer handshakeResponse)
     {
         this.chann = chann;
         this.conf = server.conf;
-        this.nbConn = nbConn;
+        this.tcpConn = tcpConn;
 
         throughputMeter = new ThroughputMeter(conf.writeMinThroughput, conf.writeTimeout);
 
         flushMark = conf.outboundBufferSize;
         assert flushMark>0;
 
-        nbConn.queueWrite(handshakeResponse);
+        tcpConn.queueWrite(handshakeResponse);
     }
 
     
@@ -70,7 +70,7 @@ class WebSocketOutbound
     Async<Void> awaitWritableAsync; // non-null iff awaitingWritable
 
 
-    // pump: fetch frame, write to nbConn
+    // pump: fetch frame, write to tcpConn
     // ----------------------------------------------------------------------------------------------------
 
     long flushMark; // must be >0 initially. later becomes 0 when there are no more frames
@@ -83,7 +83,7 @@ class WebSocketOutbound
         {
             pumpE();
         }
-        catch (Exception e) // from nbConn; or unexpected RuntimeException from user code
+        catch (Exception e) // from tcpConn; or unexpected RuntimeException from user code
         {
             WebSocketServer.logErrorOrDebug(e);
 
@@ -105,11 +105,11 @@ class WebSocketOutbound
         while(true) // fetch & flush loop
         {
             // [flush]
-            long wr = nbConn.getWriteQueueSize();
+            long wr = tcpConn.getWriteQueueSize();
             if(wr> flushMark)
             {
-                nbConn_write(); // throws
-                wr = nbConn.getWriteQueueSize();
+                tcpConn_write(); // throws
+                wr = tcpConn.getWriteQueueSize();
 
                 if(wr> flushMark) // await writable, then try write again
                 {
@@ -150,7 +150,7 @@ class WebSocketOutbound
                     return;
                 }
 
-                if(f== fetch_success) // a frame is queued to nbConn
+                if(f== fetch_success) // a frame is queued to tcpConn
                 {
                     continue;        // write if wr>flushMark
                 }
@@ -168,12 +168,12 @@ class WebSocketOutbound
 
                 assert f== fetch_stall;
                 // try write bytes already queued (maybe none)
-                nbConn_write(); // throws
-                wr = nbConn.getWriteQueueSize();
+                tcpConn_write(); // throws
+                wr = tcpConn.getWriteQueueSize();
                 if(wr>0)
                 {
                     // both fetch and write stall.
-                    // await writable only. don't care if a frame is available before nbConn is writable
+                    // await writable only. don't care if a frame is available before tcpConn is writable
                     // throughput meter clock not paused
                     set_awaitWritable(lock());  // then goto [fetch]
                     return;
@@ -192,12 +192,12 @@ class WebSocketOutbound
     } // pumpE()
 
     // watch for error from the source side.
-    // if error==null and closeCalled, carry on to flush all queued bytes, before nbConn.close()
+    // if error==null and closeCalled, carry on to flush all queued bytes, before tcpConn.close()
 
     void set_awaitWritable(Object lock)
     {
         pumpState = pump_awaitingWritable;
-        awaitWritableAsync = nbConn.awaitWritable().timeout(conf.writeTimeout);
+        awaitWritableAsync = tcpConn.awaitWritable().timeout(conf.writeTimeout);
         awaitWritableAsync.onCompletion(onConnWritable);
     }
 
@@ -231,9 +231,9 @@ class WebSocketOutbound
 
     volatile long lastWriteTime_volatile = System.currentTimeMillis();  // accessed by inbound
 
-    void nbConn_write() throws Exception
+    void tcpConn_write() throws Exception
     {
-        long w = nbConn.write(); // throws
+        long w = tcpConn.write(); // throws
         lastWriteTime_volatile = System.currentTimeMillis();
 
         if(!throughputMeter.reportBytes(w))
@@ -241,7 +241,7 @@ class WebSocketOutbound
             throw new IOException("outbound throughput too low");  // as if network error
         }
     }
-    // nbConn errors could be benign, e.g. write timeout, write throughput too low.
+    // tcpConn errors could be benign, e.g. write timeout, write throughput too low.
     // inbound could still be working, we don't destroy inbound proactively.
     // however app ought to detect error from outbound and close the whole ws connection.
 
@@ -249,7 +249,7 @@ class WebSocketOutbound
     {
         // graceful iff error==null
         pumpState = pump_retired;
-        chann.nbConn_close(graceful);
+        chann.tcpConn_close(graceful);
     }
 
 
@@ -261,7 +261,7 @@ class WebSocketOutbound
     // -----------------------------------------------------------------
 
 
-    // get a frame from stage, queue it into nbConn.
+    // get a frame from stage, queue it into tcpConn.
     static final int
         fetch_success =0,
         fetch_stall =1,
@@ -278,7 +278,7 @@ class WebSocketOutbound
         {
             if(chann.dump!=null)
                 chann.dumpFrameHead(false, pingFrame);
-            nbConn.queueWrite(pingFrame);
+            tcpConn.queueWrite(pingFrame);
             pingFrame =null;
             return fetch_success;
         }
@@ -286,7 +286,7 @@ class WebSocketOutbound
         {
             if(chann.dump!=null)
                 chann.dumpFrameHead(false, pongFrame);
-            nbConn.queueWrite(pongFrame);
+            tcpConn.queueWrite(pongFrame);
             pongFrame =null;
             return fetch_success;
         }
@@ -409,10 +409,10 @@ class WebSocketOutbound
 
             if(chann.dump!=null)
                 chann.dumpFrameHead(false, ByteBuffer.wrap(frameHead));
-            nbConn.queueWrite(ByteBuffer.wrap(frameHead));
+            tcpConn.queueWrite(ByteBuffer.wrap(frameHead));
 
             for(ByteBuffer bb : bbs)
-                nbConn.queueWrite(bb);
+                tcpConn.queueWrite(bb);
 
             return pendingRead==null ? fetch_success : fetch_stall;
         }
@@ -620,7 +620,7 @@ class WebSocketOutbound
                 // else if running/awaitingWritable, let pump finish on its own.
                 //     ping/pong may exist, they'll be queued. but no more frames will be queued.
                 //     pump will try to flush all queued bytes then retire gracefully.
-                //     pump may encounter nbConn error before flushing is done.
+                //     pump may encounter tcpConn error before flushing is done.
                 //     duration of flushing is limited by bufferSize/minThroughput
                 // else retired (closeFrame was flushed)
             }

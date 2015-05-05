@@ -244,7 +244,7 @@ public class CookieJar
             if(iColon!=-1)
                 requestHost = requestHost.substring(0, iColon);
 
-            if(!domainMatches(requestHost, cookieDomain))
+            if(!Cookie.domainMatches(requestHost, cookieDomain))
                 throw new IllegalArgumentException("requestHost does not match cookieDomain");
         }
         this.cookieDomain = cookieDomain;
@@ -274,7 +274,7 @@ public class CookieJar
         HashMap<String,String> map = new HashMap<>(requestCookies);
         for(Cookie cookie : responseCookies.values())
         {
-            if(cookie.expired())
+            if(cookie.toDelete())
                 map.remove(cookie.name());
             else // [note]
                 map.put(cookie.name(), cookie.value());
@@ -294,7 +294,7 @@ public class CookieJar
     {
         Cookie cookie = responseCookies.get(cookieName);
         if(cookie!=null)
-            return cookie.expired() ? null : cookie.value();
+            return cookie.toDelete() ? null : cookie.value();
 
         return requestCookies.get(cookieName);
     }
@@ -348,7 +348,7 @@ public class CookieJar
 
         Cookie prev = responseCookies.put(cookie.name(), cookie);
         if(prev!=null)
-            return prev.expired() ? null : prev.value();
+            return prev.toDelete() ? null : prev.value();
         else
             return requestCookies.get(cookie.name());
         // if there's a request cookie with the same name, it should be in the same domain/path
@@ -373,7 +373,7 @@ public class CookieJar
             deleteReqCookie(cookieName); // the request cookie should be in the same cookieDomain/Path
 
         if(prev!=null)
-            return prev.expired() ? null : prev.value();
+            return prev.toDelete() ? null : prev.value();
         else
             return reqValue;
     }
@@ -422,56 +422,5 @@ public class CookieJar
 
 
 
-
-    // whether a request host matches a cookie domain. e.g. "x.y.com" domain-matches "y.com"
-    // http://tools.ietf.org/html/rfc6265#section-5.1.3
-    // remember to remove port from requestHost.
-    // cookieDomain must have been validated
-    // both args must be in lower case
-    static boolean domainMatches(String requestHost, String cookieDomain)
-    {
-        if(!requestHost.endsWith(cookieDomain))
-            return false;
-        int r = requestHost.length()-cookieDomain.length();
-        if(r>0 && requestHost.charAt(r-1)!='.')
-            return false;
-        // requestHost must not an IP address. it's must be true here since cookieDomain is a valid domain
-        return true;
-    }
-
-
-
-
-
-// not used
-
-//    // http://tools.ietf.org/html/rfc6265#section-5.1.4
-//    static boolean pathMatches(String requestPath, String cookiePath)
-//    {
-//        if(!requestPath.startsWith(cookiePath)) // case sensitive
-//            return false;
-//        // note: false==pathMatches("/abc", "/abc/")
-//
-//        if(requestPath.length()==cookiePath.length())
-//            return true;
-//
-//        if(cookiePath.endsWith("/"))
-//            return true;
-//
-//        if(requestPath.charAt(cookiePath.length())=='/')
-//            return true;
-//
-//        return false;
-//    }
-//
-//    // http://tools.ietf.org/html/rfc6265#section-5.1.4
-//    static String defaultCookiePath(String requestPath)
-//    {
-//        int iRightMostSlash = requestPath.lastIndexOf('/'); // won't be -1
-//        if(iRightMostSlash==0)
-//            return "/";
-//        else
-//            return requestPath.substring(0, iRightMostSlash);
-//    }
 
 }

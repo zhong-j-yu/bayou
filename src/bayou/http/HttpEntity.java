@@ -1,9 +1,13 @@
 package bayou.http;
 
-import _bayou._tmp._HttpUtil;
+import _bayou._http._HttpUtil;
+import bayou.async.Async;
 import bayou.bytes.ByteSource;
 import bayou.mime.ContentType;
 
+import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 
 /**
@@ -54,6 +58,11 @@ public interface HttpEntity
      *     It's possible that the consumer of an `HttpEntity` never calls the `body()` method.
      *     The implementation of `body()` should be lazy, creating body only on demand.
      * </p>
+     * <p>
+     *     The length of the body should be consistent with {@link #contentLength()};
+     *     however, if this is a response entity to a HEAD request, the body can be empty,
+     *     regardless of the value of {@link #contentLength()}.
+     * </p>
      * @throws IllegalStateException if invoked more than once on a non-sharable entity.
      */
     ByteSource body() throws IllegalStateException;
@@ -68,6 +77,66 @@ public interface HttpEntity
     //
     // an impl might attempt to make getBody() lighter/lazier, by delaying work till read().
     // but usually read() imm follows getBody(), so the laziness is not awarded.
+
+
+    /**
+     * Get all the bytes of the body.
+     * <p>
+     *     This method is equivalent to
+     *     <code>body().{@link ByteSource#readAll(int) readAll}(maxBytes)</code>
+     * </p>
+     */
+    default Async<ByteBuffer> bodyBytes(int maxBytes)
+    {
+        return body().readAll(maxBytes);
+    }
+
+
+    /**
+     * Get the body as a String.
+     * <p>
+     *     The default implementation calls  {@link #body()} .
+     *     {@link bayou.bytes.ByteSource#asString(int, java.nio.charset.Charset)
+     *     asString(maxChars, charset) }.
+     * </p>
+     * <p>
+     *     The charset is from {@link #contentType() contentType}'s
+     *     "charset" parameter;
+     *     otherwise "UTF-8" is assumed.
+     * </p>
+     * <p>
+     *     {@link #contentEncoding() contentEncoding} must be `null`,
+     *     or this action fails.
+     * </p>
+     *
+     */
+    default Async<String> bodyString(int maxChars)
+    {
+        if(contentEncoding()!=null)
+            return Async.failure(new Exception("entity.contentEncoding="+contentEncoding()));
+
+        Charset charset= StandardCharsets.UTF_8;
+        {
+            ContentType ct = contentType();
+            if(ct!=null)
+            {
+                String s = ct.param("charset");
+                if(s!=null)
+                {
+                    try
+                    {
+                        charset = Charset.forName(s);
+                    }
+                    catch (Exception e)
+                    {
+                        return Async.failure(e);
+                    }
+                }
+            }
+        }
+
+        return body().asString(maxChars, charset);
+    }
 
 
     /**
@@ -92,6 +161,9 @@ public interface HttpEntity
      * <p>
      *     This property corresponds to the
      *     <a href="http://tools.ietf.org/html/rfc2616#section-14.13">Content-Length</a> header.
+     *     Note that if this is a response entity to a HEAD request,
+     *     <code>Content-Length</code> reports the <i>would-be</i> length,
+     *     while the {@link #body()} method can return an empty source.
      * </p>
      * <p>
      *     If {@link #contentEncoding() contentEncoding}!=null,

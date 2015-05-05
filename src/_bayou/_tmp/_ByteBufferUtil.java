@@ -1,6 +1,7 @@
 package _bayou._tmp;
 
 import _bayou._log._Logger;
+import _bayou._str._StrUtil;
 
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
@@ -68,10 +69,7 @@ public class _ByteBufferUtil
 
     public static ByteBuffer wrapLatin1(CharSequence chars)
     {
-        byte[] bytes = new byte[chars.length()];
-        for(int i=0; i<bytes.length; i++)
-            bytes[i] = (byte) chars.charAt(i);
-        return ByteBuffer.wrap(bytes);
+        return ByteBuffer.wrap(_StrUtil.latin1Bytes(chars));
     }
 
 

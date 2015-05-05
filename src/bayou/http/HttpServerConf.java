@@ -2,7 +2,7 @@ package bayou.http;
 
 import _bayou._tmp._Tcp;
 import _bayou._tmp._TrafficDumpWrapper;
-import _bayou._tmp._ChArr;
+import _bayou._str._ChArr;
 import _bayou._tmp._Util;
 import bayou.bytes.RangedByteSource;
 import bayou.ssl.SslConf;
@@ -88,13 +88,13 @@ import static _bayou._tmp._Util.require;
  */
 
 @SuppressWarnings("UnusedDeclaration")
-public class HttpServerConf
+public final class HttpServerConf
 {
     final TcpServer.Conf tcpConf = new TcpServer.Conf();
 
     // for TcpChannel2Connection. not public yet; apps probably don't care
-    int readBufferSize = 16*1024;
-    int writeBufferSize = 16*1024;
+    final int readBufferSize = 16*1024;
+    final int writeBufferSize = 16*1024;
 
 
     /**
@@ -111,11 +111,8 @@ public class HttpServerConf
 
         // may do extra validations here
 
-        // calculate derived fields
+        // may calculate derived fields here
 
-        accessLoggerWrapper = _accessLogger==null ? null : new HttpAccessLoggerWrapper(_accessLogger);
-
-        trafficDumpWrapper = _trafficDump ==null? null : new _TrafficDumpWrapper("Http", _trafficDump);
     }
     void assertCanChange()
     {
@@ -182,7 +179,7 @@ public class HttpServerConf
      *     default: {8080}
      * </code></p>
      * <p>
-     *     Port 0 means an automatically allocated port.
+     *     Port <code>0</code> means an automatically allocated port.
      * </p>
      * <p>
      *     See {@link #sslPort(int...)} for SSL ports.
@@ -354,7 +351,7 @@ public class HttpServerConf
     {
         assertCanChange();
         _Tcp.validate_confSelectorIds(selectorIds);
-        tcpConf.selectorIds = selectorIds;
+        tcpConf.selectorIds = selectorIds.clone();
         return this;
     }
 
@@ -379,8 +376,8 @@ public class HttpServerConf
      *         .sslPort(8080)  // for https
      * </pre>
      * <p>
-     *     Port 0 means an automatically allocated port.
-     *     If port 0 is specified for both plain and SSL,
+     *     Port <code>0</code> means an automatically allocated port.
+     *     If port <code>0</code> is specified for both plain and SSL,
      *     a port is automatically allocated to server both plain and SSL connections.
      * </p>
      * <p>
@@ -406,7 +403,7 @@ public class HttpServerConf
     /**
      * SSLContext for SSL connections.
      * <p><code>
-     *     default: null (the default)
+     *     default: null
      * </code></p>
      * <p>
      *     If <code>null</code>, {@link SSLContext#getDefault()} is used. Typically it requires
@@ -477,6 +474,7 @@ public class HttpServerConf
      */
     public HttpServerConf sslEngineConf(ConsumerX<SSLEngine> action)
     {
+        require(action != null, "action!=null");
         assertCanChange();
         this.sslEngineConf = action;
         return this;
@@ -510,8 +508,6 @@ public class HttpServerConf
     HashMap<_ChArr, String> supportedMethods;
     { // default
         supportedMethods("GET", "HEAD", "POST", "PUT", "DELETE");
-        // CONNECT, OPTIONS, TRACE are standard methods listed in RFC7231, but they are
-        //    excluded by default since most applications don't expect them
     }
     /**
      * HTTP methods supported by the server.
@@ -521,6 +517,10 @@ public class HttpServerConf
      * <p>
      *     The server will send a 501 response if the method of an HTTP request is not among the supported.
      * </p>
+     * <P>
+     *     Note that "CONNECT", "OPTIONS", "TRACE" are standard methods listed in RFC7231, but they are
+     *     excluded by default since most applications don't expect them.
+     * </P>
      *
      * @return `this`
      */
@@ -702,9 +702,9 @@ public class HttpServerConf
         return this;
     }
 
-    int requestHeadFieldMaxLength = 8*1024; // max length of method, URI, header name/value.
+    int requestHeadFieldMaxLength = 8*1024;
     /**
-     * Max length for each field in a request: <code>method, uri, header name, header value</code>.
+     * Max length for request uri and any header value in a request.
      * <p><code>
      *     default: 8*1024 (8KB)
      * </code></p>
@@ -790,7 +790,7 @@ public class HttpServerConf
     // usually the last response is marked by "Connection:close" and client will close immediately.
     // if not, we spend sometime to drain, with a timeout. the timeout can be just long enough
     // to reasonably assure that the response should have been read by the client.
-    // ok to be null or negative, meaning no drain. see NbConnection.close(drainTimeout)
+    // ok to be null or negative, meaning no drain. see TcpConnection.close(drainTimeout)
     //    but we don't advertise that.
     Duration closeTimeout = Duration.ofSeconds(5);
     /**
@@ -835,11 +835,11 @@ public class HttpServerConf
      *         With the default "reject" policy, the server application is assured that any request passed to it
      *         has no {@link HttpEntity#contentEncoding() entity contentEncoding}.
      *     </dd>
-     *     <dt>"accept"</dt>
+     *     <dt>"keep"</dt>
      *     <dd>
-     *         Accept requests with Content-Encoding. <br>
-     *         The server application must be prepared to handle non-null
-     *         {@link HttpEntity#contentEncoding() entity contentEncoding} in any request,
+     *         Accept requests with Content-Encoding,
+     *         keep it as {@link HttpEntity#contentEncoding() entity contentEncoding}.<br>
+     *         The server application must be prepared to handle non-null entity contentEncoding in any request,
      *         and may need to decode the {@link HttpEntity#body() entity body} accordingly, e.g. with
      *         {@link bayou.gzip.GunzipByteSource}.
      *     </dd>
@@ -853,11 +853,11 @@ public class HttpServerConf
         boolean _requestEncodingReject;
         if(requestEncodingPolicy.equals("reject"))
             _requestEncodingReject = true;
-        else if(requestEncodingPolicy.equals("accept"))
+        else if(requestEncodingPolicy.equals("keep"))
             _requestEncodingReject = false;
         else
             throw new IllegalArgumentException("invalid requestEncodingPolicy: "+requestEncodingPolicy);
-        // later we may add more policies, e.g. auto-decode
+        // later we may add more policies, e.g. "decode"
 
         this.requestEncodingPolicy = requestEncodingPolicy;
         this._requestEncodingReject = _requestEncodingReject;
@@ -1084,12 +1084,13 @@ public class HttpServerConf
      * <p>
      *     When enabled, if the request is GET/HEAD with the "Range" header,
      *     and the response is 200 without the "Accept_Ranges" header,
-     *     the server will handle the partial request, and may serve a partial response body.
+     *     the server may transform the response to 206 with partial body.
      *     The "If-Range" request header is also handled.
      *     <!-- we don't explain the logic in detail here since it's too complicated -->
      * </p>
      * <p>
-     *     App can bypass the default behavior by setting the "Accept_Ranges" header in a response.
+     *     App can bypass the default behavior by generating a 206 response by itself,
+     *     or by setting the "Accept_Ranges" header in a 200 response (e.g. Accept-Ranges: none).
      * </p>
      * <p>
      *     See also {@link RangedByteSource}.
@@ -1143,8 +1144,8 @@ public class HttpServerConf
     // will not be called concurrently.
     // if app actually wants to print concurrently, dispatch tasks inside accept()
     // if throws, printer is broken, all future log entries are ignored
-    Consumer<HttpAccess> _accessLogger = null;
-    HttpAccessLoggerWrapper accessLoggerWrapper; // see freeze()
+    private Consumer<HttpAccess> accessLogger = null;
+    HttpAccessLoggerWrapper accessLoggerWrapper;
     /**
      * Http Access Logger.
      * <p><code>
@@ -1174,7 +1175,10 @@ public class HttpServerConf
     {
         assertCanChange();
         // null is ok
-        this._accessLogger = accessLogger;
+        this.accessLogger = accessLogger;
+
+        accessLoggerWrapper = accessLogger==null ? null : new HttpAccessLoggerWrapper(accessLogger);
+
         return this;
     }
     /**
@@ -1212,8 +1216,8 @@ public class HttpServerConf
 
     // The server allocates a dedicated thread for `trafficDump`; entries will be passed to it
     // in a serialized order. it can invoke blocking IO actions.
-    Consumer<CharSequence> _trafficDump = null;    // don't use it directly. use the wrapper instead
-    _TrafficDumpWrapper trafficDumpWrapper; // see freeze()
+    private Consumer<CharSequence> trafficDump = null;
+    _TrafficDumpWrapper trafficDumpWrapper;
 
     /**
      * Where to dump http traffic, for debugging purpose.
@@ -1237,9 +1241,59 @@ public class HttpServerConf
     {
         assertCanChange();
         // null is ok
-        this._trafficDump = trafficDump;
+        this.trafficDump = trafficDump;
+
+        trafficDumpWrapper = trafficDump ==null? null : new _TrafficDumpWrapper("Http Server", trafficDump);
+
         return this;
     }
+
+
+    /**
+     * Set default values suitable for a proxy.
+     * <p>
+     *     HttpServer can be used as an intermediary, e.g. proxy, load balancer,
+     *     which mainly forwards requests and responses <i>as-is</i>.
+     *     Some HttpServerConf default values may not be appropriate for that purpose.
+     *     Use <code>setProxyDefaults()</code> to set values appropriate for an intermediary.
+     * </p>
+     * <p>
+     *     Calling this method is equivalent to calling
+     * </p>
+     * <pre>
+     *     {@link #supportedMethods(String...) supportedMethods}("GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE");
+     *
+     *     {@link #requestEncodingPolicy(String) requestEncodingPolicy}("keep");
+     *
+     *     {@link #autoGzip(boolean) autoGzip}(false);
+     *
+     *     {@link #autoConditional(boolean) autoConditional}(false);
+     *
+     *     {@link #autoRange(boolean) autoRange}(false);
+     *
+     *     {@link #autoCacheControl(boolean) autoCacheControl}(false);
+     * </pre>
+     *
+     *
+     * @return `this`
+     */
+    public HttpServerConf setProxyDefaults()
+    {
+        supportedMethods("GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE");
+
+        requestEncodingPolicy("keep");
+
+        autoGzip(false);
+
+        autoConditional(false);
+
+        autoRange(false);
+
+        autoCacheControl(false);
+
+        return this;
+    }
+
 
 
     // getters. not important to apps ==================================================================
@@ -1277,7 +1331,7 @@ public class HttpServerConf
     }
     public int[] get_selectorIds()
     {
-        return tcpConf.selectorIds;
+        return tcpConf.selectorIds.clone();
     }
     public List<Integer> get_sslPorts()
     {
@@ -1387,10 +1441,10 @@ public class HttpServerConf
     }
     public Consumer<HttpAccess> get_accessLogger()
     {
-        return _accessLogger;
+        return accessLogger;
     }
     public Consumer<CharSequence> get_trafficDump()
     {
-        return _trafficDump;
+        return trafficDump;
     }
 }

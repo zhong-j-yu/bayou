@@ -3,6 +3,7 @@ package bayou.ssl;
 import _bayou._tmp._ByteBufferPool;
 import _bayou._tmp._ByteBufferUtil;
 import _bayou._tmp._Tcp;
+import _bayou._tmp._TcpConn2Chann;
 import bayou.async.Async;
 import bayou.tcp.TcpChannel;
 import bayou.tcp.TcpConnection;
@@ -17,7 +18,7 @@ import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.concurrent.Executor;
 
-class SslConnectionImpl implements SslConnection
+class SslConnectionImpl implements SslConnection, _TcpConn2Chann
 {
     _ByteBufferPool bufferPool;
     TcpChannel channel;
@@ -39,7 +40,20 @@ class SslConnectionImpl implements SslConnection
         return id;
     }
 
-    @Override public InetAddress getPeerIp(){ return channel.getPeerIp(); }
+    @Override
+    public String getPeerHost()
+    {
+        return channel.getPeerHost();
+    }
+    @Override public InetAddress getPeerIp()
+    {
+        return channel.getPeerIp();
+    }
+    @Override
+    public int getPeerPort()
+    {
+        return channel.getPeerPort();
+    }
 
     @Override
     public SSLSession getSslSession()
@@ -86,7 +100,6 @@ class SslConnectionImpl implements SslConnection
         freeWriteBuffers();
 
         closeAction = _Tcp.close(channel, drainTimeout, bufferPool);
-        channel = null;
         return closeAction;
     }
 
@@ -678,5 +691,115 @@ class SslConnectionImpl implements SslConnection
             System.out.print(" ");
         }
         System.out.println();
+    }
+
+
+    @Override
+    public TcpChannel toChann(String peerHost, int peerPort)
+    {
+        return new AsChann(this, peerHost, peerPort);
+    }
+    // this is only used by another SslConnectionImpl (that treats this conn as a chann)
+    static class AsChann implements TcpChannel
+    {
+        SslConnectionImpl conn;
+        String peerHost;
+        int peerPort;
+        AsChann(SslConnectionImpl conn, String peerHost, int peerPort)
+        {
+            this.conn = conn;
+            this.peerHost = peerHost;
+            this.peerPort = peerPort;
+        }
+
+        @Override
+        public String getPeerHost()
+        {
+            return peerHost;
+        }
+        @Override
+        public int getPeerPort()
+        {
+            return peerPort;
+        }
+
+        // todo analyze FIN/CLOSE_NOTIFY/close()
+        @Override
+        public int read(ByteBuffer bb) throws Exception
+        {
+            ByteBuffer r = conn.read(); // throws
+            if(r==STALL)
+                return 0;
+            if(r==TCP_FIN)
+                return -1;
+            if(r==SSL_CLOSE_NOTIFY)
+                return -1; // todo
+
+            // r is data. copy to bb. but bb may not have enough room
+            int x = _ByteBufferUtil.putSome(bb, r);
+            if(r.hasRemaining())
+                conn.unread(r);
+            return x;
+        }
+
+        // in general we cannot impl TcpChannel.write() over a TcpConnection
+        // fortunately here it's only used by another SslConnectionImpl with a known pattern:
+        //    channel.write(bb) will be called repeatedly on the same bb until bb is empty.
+        ByteBuffer bb;
+        @Override
+        public long write(ByteBuffer... srcs) throws Exception
+        {
+            assert srcs.length==1;
+            ByteBuffer src = srcs[0];
+            if(bb==null)
+            {
+                bb=src;
+                conn.queueWrite(src.duplicate());
+                // a duplicate is queued, since conn.wr is not consistent with positions of queued buffers.
+                // we'll report progress of conn.write() through bb, so the duplicate is needed.
+            }
+            else
+                assert bb==src; // it was already queued to conn
+
+            int w = (int)conn.write(); // throws
+            bb.position(bb.position()+w);
+            if(!bb.hasRemaining())
+                bb=null;
+            return w;
+        }
+
+        @Override
+        public void shutdownOutput() throws Exception
+        {
+            conn.channel.shutdownOutput(); // throws
+        }
+
+        @Override
+        public void close()
+        {
+            conn.close(null);
+        }
+
+        // other methods do simple forwarding ///////////////////////////////////////////////
+        @Override
+        public InetAddress getPeerIp()
+        {
+            return conn.getPeerIp();
+        }
+        @Override
+        public Async<Void> awaitReadable(boolean accepting)
+        {
+            return conn.awaitReadable(accepting);
+        }
+        @Override
+        public Async<Void> awaitWritable()
+        {
+            return conn.awaitWritable();
+        }
+        @Override
+        public Executor getExecutor()
+        {
+            return conn.getExecutor();
+        }
     }
 }

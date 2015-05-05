@@ -16,7 +16,11 @@ class FiberDefaultExecutors
         ".threadKeepAliveMs", 100L).longValue();
     // must be >0. default 100ms is probably long enough.
 
-    static final int N = Runtime.getRuntime().availableProcessors();
+    //static final int N = Runtime.getRuntime().availableProcessors();
+    //static final AtomicInteger select = new AtomicInteger(0);
+    // just use one thread for default. if user wants more CPUs, he needs to do some setup
+    static final int N = 1;
+
     static final Exec[] executors = new Exec[N];
     static
     {
@@ -24,7 +28,6 @@ class FiberDefaultExecutors
             executors[i] = new Exec(i);
     }
 
-    static final AtomicInteger select = new AtomicInteger(0);
 
     static Executor getOneExec()
     {
@@ -32,7 +35,8 @@ class FiberDefaultExecutors
         if(thread instanceof _WithPreferredFiberDefaultExec) // see [inside-local-loop]
             return ((_WithPreferredFiberDefaultExec)thread).getPreferredFiberDefaultExec();
 
-        int random = select.getAndIncrement() % N;
+        //int random = select.getAndIncrement() % N;
+        int random = 0;
         return executors[random];
     }
 

@@ -1,10 +1,10 @@
 package bayou.file;
 
-import _bayou._tmp._HexUtil;
+import _bayou._str._HexUtil;
 
 import java.util.Arrays;
 
-import static _bayou._tmp._CharDef.*;
+import static _bayou._str._CharDef.*;
 
 // uri path (e.g. "/abc/xyz" ), or part of it (e.g. "bc/xy")
 // currently used only by StaticHandler, whose main concern is to normalize a request uri as a key for lookup.
@@ -80,7 +80,7 @@ class UriPath
             byte b = bytes[i];
             if(b==0)
                 percentEncode(bytes[++i], sb);
-            else if(!check( b&0xFF, Uri.pathChars))
+            else if(!check( b&0xFF, Rfc3986.pathChars))
                 percentEncode(b, sb);
             else // path char
                 sb.append((char)(b&0xFF));
@@ -162,7 +162,7 @@ class UriPath
                     bytes[len++] = 0; // escape
                 bytes[len++] = (byte)hh;
             }
-            else if( c<='\u00ff' && check((int)c, Uri.pathChars) )
+            else if( c<='\u00ff' && check((int)c, UriLoose.pathChars) )
                 bytes[len++] = (byte)c;
             else
                 return null; // invalid char

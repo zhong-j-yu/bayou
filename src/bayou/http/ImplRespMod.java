@@ -1,5 +1,9 @@
 package bayou.http;
 
+import _bayou._http._HttpDate;
+import _bayou._http._HttpUtil;
+import _bayou._str._CharDef;
+import _bayou._str._StrUtil;
 import _bayou._tmp.*;
 import bayou.async.Async;
 import bayou.bytes.ByteSource;
@@ -56,7 +60,7 @@ class ImplRespMod
         assert entity.expires()==null;
 
         // 0 or 1. could be even -1 if request parse error.
-        int httpMinorVersion= request==null? -1 : request.httpMinorVersion;
+        int req_httpMinorVersion= request==null? -1 : request.httpMinorVersion;
 
 
         int bodyType;  // [0] empty  [1] entity.getBody()  [2] chunk(entity.getBody())
@@ -65,7 +69,7 @@ class ImplRespMod
         if(L==null) // probably never null; error responses have short plain text of known size.
         {
             bodyLength = -1;
-            if(httpMinorVersion>=1)  // version could be 0 or even -1
+            if(req_httpMinorVersion>=1)  // version could be 0 or even -1
             {
                 headers.put(Transfer_Encoding, "chunked");
                 bodyType = 2;
@@ -99,11 +103,11 @@ class ImplRespMod
         headers.put(Connection, "close");   // there was no Connection
 
         headers.put(Date, _HttpDate.getCurrStr());  // there was no Date
-        headers.put(Server, "Bayou");
+        headers.put(Server, "bayou.io");
 
         // done
         ByteSource body = body(hConn.conf, entity, bodyType);
-        return new ImplConnResp(hConn, response, isLast, httpMinorVersion, body, bodyLength);
+        return new ImplConnResp(hConn, response, isLast, req_httpMinorVersion, body, bodyLength);
     }
 
     // resolve body. delayed till the last step to avoid error handling
@@ -118,10 +122,10 @@ class ImplRespMod
             return body;
 
         if(bodyType==2)
-            return new ImplRespChunkedSource(conf.outboundBufferSize, body);
+            return new ImplChunkedSource(conf.outboundBufferSize, body);
 
         if(bodyType==3)
-            return new ImplRespChunkedSource(conf.outboundBufferSize, new GzipByteSource(body, 1));
+            return new ImplChunkedSource(conf.outboundBufferSize, new GzipByteSource(body, 1));
 
         throw new AssertionError();
     }
@@ -145,7 +149,7 @@ class ImplRespMod
 
         HttpStatus statusL = appResponse.status(); // may change later (200 to 304/412/206)
         int statusCodeL = statusL.code;
-        if(statusCodeL<200)  // 1xx not supported
+        if(statusCodeL<200)  // 1xx
             throw new RuntimeException("non-final status code ["+statusCodeL+"] not allowed in HttpResponse");
 
         HttpEntity entityL = appResponse.entity(); // may change later
@@ -165,6 +169,7 @@ class ImplRespMod
 
         // make a copy of response; don't touch the original (e.g. it may be a shared stock response)
         HttpResponseImpl resp = new HttpResponseImpl();
+        resp.httpVersion = appResponse.httpVersion();
         resp.status = statusL;
         resp.entity = entityL;
 
@@ -227,7 +232,7 @@ class ImplRespMod
 
 
         if(entityL!=null)
-            copyEntityHeaders(entityL, headers);  // no Content-Length
+            _HttpUtil.copyEntityHeaders(entityL, headers);  // no Content-Length
 
         if(conf.autoCacheControl && GET_HEAD)
             modCacheControl(entityL, headers);
@@ -270,7 +275,7 @@ class ImplRespMod
                 bodyLength=-1;
                 if(request.httpMinorVersion>=1)
                 {
-                    hTransferEncoding = "chunked";
+                    hTransferEncoding = "chunked"; // even if response.httpVersion=1.0; the 1.1 client understands.
                     bodyType = 2;
                 }
                 else // HTTP/1.0 client. no chunked, no Content-Length. body ends when connection closes
@@ -309,7 +314,7 @@ class ImplRespMod
                 request.httpMinorVersion, bodyLength, request.state100,
                 respConnection, reqConnection, statusCodeL);
 
-        respConnection = modConnectionHeader(respConnection, isLast);
+        respConnection = _HttpUtil.modConnectionHeader(respConnection, isLast);
         // respConnection was checked; still valid after modConnectionHeader()
         headers.put(Connection, respConnection);
 
@@ -318,33 +323,29 @@ class ImplRespMod
         if(!headers.containsKey(Date))
             headers.put(Date, _HttpDate.getCurrStr());
 
-        String hServer = headers.get(Server);
-        if(hServer==null || hServer.isEmpty())
-            hServer = "Bayou";
-        else
-            hServer = "Bayou " + hServer;  // hServer was checked, is still valid
-        headers.put(Server, hServer);
+        if(!headers.containsKey(Server))
+            headers.put(Server, "bayou.io");
 
 
         ByteSource body = body(conf, entityL, bodyType);
         return new ImplConnResp(hConn, resp, isLast, request.httpMinorVersion, body, bodyLength); // no throw
     }
 
-    static boolean isLastResponse(int httpMinorVersion, long bodyLength, int state100,
+    static boolean isLastResponse(int req_httpMinorVersion, long bodyLength, int state100,
                                   String respConnection, String reqConnection, int statusCode)
     {
         // app can instruct Connection:close in response headers
-        if(containsToken(respConnection, "close"))
+        if(_HttpUtil.containsToken(respConnection, "close"))
             return true;
 
         // close if request explicitly says Connection: close.
-        if(containsToken(reqConnection, "close"))
+        if(_HttpUtil.containsToken(reqConnection, "close"))
             return true;
 
-        if(httpMinorVersion==0) // HTTP/1.0
+        if(req_httpMinorVersion==0) // HTTP/1.0
         {
             // close if request does not explicitly say Connection: keep-alive
-            if( ! containsToken(reqConnection, "keep-alive") )
+            if( ! _HttpUtil.containsToken(reqConnection, "keep-alive") )
                 return true;
 
             if(bodyLength==-1)  // body of unknown length. no Content-Length
@@ -366,66 +367,6 @@ class ImplRespMod
 
         // no reason to close. keep-alive for next request. this is most likely.
         return false;
-    }
-
-    // tokenList is a list of simple tokens separated by comma
-    // impl is fast there's no comma (single token)
-    static boolean containsToken(String tokenList, String token)
-    {
-        if(tokenList==null)
-            return false;
-
-        int i=0;
-        while(i<tokenList.length())
-        {
-            int j = tokenList.indexOf(',', i);
-            if(j==-1)
-                j = tokenList.length();
-            String t = tokenList.substring(i,j).trim();
-            if(_StrUtil.equalIgnoreCase(t, token))
-                return true;
-            i = j+1;
-        }
-        return false;
-    }
-
-    // set "close/keep-alive" in the resp Connection header.
-    static String modConnectionHeader(String header, boolean close)
-    {
-        if(header==null) // most likely response has no Connection header
-            return close?"close":"keep-alive";
-
-        // next likely: resp header is "close"
-        if(close && _StrUtil.equalIgnoreCase(header, "close"))
-            return header;
-
-        // unlikely general case. header may already contain "close/keep-alive" tokens
-        StringBuilder sb = new StringBuilder();
-        boolean set = false;
-        for(String token: header.split(","))
-        {
-            token = token.trim();
-            if(_StrUtil.equalIgnoreCase(token, "close"))
-            {
-                if(!close)  // in fact not possible
-                    token = "keep-alive";
-                set = true;
-            }
-            else if(_StrUtil.equalIgnoreCase(token, "keep-alive"))
-            {
-                if(close)
-                    token = "close";
-                set = true;
-            }
-            if(sb.length()>0) sb.append(", ");
-            sb.append(token);
-        }
-        if(!set)
-        {
-            if(sb.length()>0) sb.append(", ");
-            sb.append(close?"close":"keep-alive");
-        }
-        return sb.toString();
     }
 
     static boolean shouldGzip(HttpEntity entity, HttpServerConf conf)
@@ -562,63 +503,13 @@ class ImplRespMod
         {
             // discard entity body, but keep the entity headers.
             // per spec, we SHOULD only copy 2 entity headers: ETag, Expires. no real problem to copy all
-            copyEntityHeaders(entityL, resp.headers);
+            _HttpUtil.copyEntityHeaders(entityL, resp.headers);
             resp.entity = null;
         }
         else // 412
         {
             // discard original entity
             resp.entity = new HttpHelper.SimpleTextEntity(statusL.toString());
-        }
-    }
-
-    static void copyEntityHeaders(HttpEntity entity, HeaderMap headers)
-    {
-        // if a header already exist in `headers`, it may be overridden by value from entity.
-        // note: must sanity check entity header values. may throw.
-
-        ContentType contentType = entity.contentType();
-        if(contentType!=null)
-            headers.put(Content_Type, contentType.toString());  // content-type chars were checked
-
-        String contentEncoding = entity.contentEncoding();
-        if(contentEncoding!=null)
-        {
-            _HttpUtil.checkHeaderValue(Content_Encoding, contentEncoding);
-            headers.put(Content_Encoding, contentEncoding);
-        }
-
-        // bodyLength is not an entity header
-
-        String etag = entity.etag();
-        if(etag!=null)
-        {
-            // we follow rfc2616, treat entity-tag as quoted-string.
-            // therefore, server produced etag may need escape, and client supplied etag may need un-escape.
-            // we also advised in getEtag() to exclude " and \ to avoid the problem (see http bis)
-            _HttpUtil.validateEtag(etag);
-
-            String s = _StrUtil.doQuote(etag);
-            if(entity.etagIsWeak())
-                s = "W/"+s;
-            headers.put(ETag, s);
-        }
-
-        Instant lastModified = entity.lastModified();
-        if(lastModified!=null)
-            headers.put(Last_Modified, _HttpDate.toHttpDate(lastModified));
-
-        Instant expires = entity.expires();
-        if(expires!=null)
-        {
-            // per rfc2616, it should not exceed 1 year from now.
-            Instant oneYear = Instant.now().plusSeconds(365*24*3600); // will not overflow
-            if(expires.isAfter(oneYear))
-                expires = oneYear;
-            // don't care if `Expires` is in the distant past, like year 0001.
-            // worst case, client fails to parse or accept it.
-
-            headers.put(Expires, _HttpDate.toHttpDate(expires));
         }
     }
 
@@ -672,6 +563,7 @@ class ImplRespMod
     }
 
     // tags from If-Match/If-None-Match, tag from GET 200 entity (can be null)
+    // also used for matching If-Range
     static boolean matchEtag(String tags, HttpEntity entity, boolean strongMatch)
     {
         if(tags.equals("*"))
@@ -774,7 +666,7 @@ class ImplRespMod
         if(entityDate==null) // unsure, assume modified
             return true;
         // exact date match
-        return !_HttpDate.match(entityDate, reqDate);  // only works if reqDate is rfc1123-date
+        return !_HttpDate.match(entityDate, reqDate);
     }
 
 
@@ -800,6 +692,7 @@ class ImplRespMod
         //     ??????  : some custom range unit, which we don't understand. app will handle it.
         if(resp.headers.containsKey(Accept_Ranges))
             return;
+        // Content-Range header shouldn't appear in a 200 response
 
         // if body length is unknown, we can't support range, because Content-Range in 206 response
         // requires a last-byte-pos which is difficult for us to choose a value.
@@ -864,21 +757,17 @@ class ImplRespMod
         String hIfRange = requestHeaders.get(If_Range);
         if(hIfRange!=null)
         {
-            // it must not be a weak etag (W/"..."). if it is, we treat it as date (and fail to match)
+            int len = hIfRange.length();
+            if(len<2) return; // min case - "" (empty strong etag)
 
             if(hIfRange.charAt(0)==DQUOTE) // strong etag
             {
-                int len = hIfRange.length();
-                if(hIfRange.charAt(len-1)!=DQUOTE) // malformed
+                if(!matchEtag(hIfRange, entityL, true))
                     return;
-
-                String etag = entityL.etag();
-                if(etag==null)
-                    return;
-                if(entityL.etagIsWeak())
-                    return;
-                if(!hIfRange.substring(1, len-1).equals(etag))
-                    return;
+            }
+            else if(hIfRange.startsWith("W/")) // weak etag
+            {
+                return;
             }
             else // date
             {
@@ -886,7 +775,7 @@ class ImplRespMod
                 if(lastModified==null)
                     return;
                 if(!_HttpDate.match(lastModified, hIfRange))
-                    return;  // maybe date is not in rfc1123-date format, that's fine
+                    return;
             }
 
             // If-Range matched etag or lastModified

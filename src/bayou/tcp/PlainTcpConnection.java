@@ -3,6 +3,7 @@ package bayou.tcp;
 import _bayou._tmp._ByteBufferPool;
 import _bayou._tmp._ByteBufferUtil;
 import _bayou._tmp._Tcp;
+import _bayou._tmp._TcpConn2Chann;
 import bayou.async.Async;
 import bayou.ssl.SslConnection;
 
@@ -13,7 +14,7 @@ import java.util.ArrayDeque;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
 
-class PlainTcpConnection implements TcpConnection
+class PlainTcpConnection implements TcpConnection, _TcpConn2Chann
 {
     _ByteBufferPool readBufferPool;
     _ByteBufferPool writeBufferPool;
@@ -42,7 +43,20 @@ class PlainTcpConnection implements TcpConnection
         return id;
     }
 
-    @Override public InetAddress getPeerIp(){ return channel.getPeerIp(); }
+    @Override
+    public String getPeerHost()
+    {
+        return channel.getPeerHost();
+    }
+    @Override public InetAddress getPeerIp()
+    {
+        return channel.getPeerIp();
+    }
+    @Override
+    public int getPeerPort()
+    {
+        return channel.getPeerPort();
+    }
 
     // close() must be called on both read and write flow.
     Async<Void> closeAction; // updated only in close(), which is on both flows; so both flows can read it safely.
@@ -59,7 +73,6 @@ class PlainTcpConnection implements TcpConnection
         freeWriteBuffers();
 
         closeAction = _Tcp.close(channel, drainTimeout, readBufferPool);
-        channel = null;
         return closeAction;
     }
 
@@ -343,19 +356,18 @@ class PlainTcpConnection implements TcpConnection
 
 
     static final boolean trace = false;
-    static AtomicInteger connIdGen = new AtomicInteger(0);
     int connId;
     void trace(Object... args)
     {
         if(connId==0)
-            connId = connIdGen.incrementAndGet();
+            connId = _Tcp.idGenerator.get().intValue();
 
         trace0(connId, args);
     }
     static int traceId = 0;
     synchronized static void trace0(int connId, Object... args)
     {
-        System.out.print("PlainNbConnection   " +connId+ "   " +(traceId++)+"   ");
+        System.out.print("PlainTcpConnection   " +connId+ "   " +(traceId++)+"   ");
         for(Object arg : args)
         {
             System.out.print(arg);
@@ -464,5 +476,93 @@ class PlainTcpConnection implements TcpConnection
 
 
 
+
+
+    @Override
+    public TcpChannel toChann(String peerHost, int peerPort)
+    {
+        assert unread==null;
+        assert copyBuffer==null;
+        assert closeAction==null;
+
+        return new AsChann(channel, peerHost, peerPort);
+    }
+
+
+    static class AsChann implements TcpChannel
+    {
+        TcpChannel chann;
+        String peerHost;
+        int peerPort;
+
+        AsChann(TcpChannel chann, String peerHost, int peerPort)
+        {
+            this.chann = chann;
+            this.peerHost = peerHost;
+            this.peerPort = peerPort;
+        }
+
+        @Override
+        public String getPeerHost()
+        {
+            return peerHost;
+        }
+        @Override
+        public int getPeerPort()
+        {
+            return peerPort;
+        }
+
+        /////////////////////////////////////////////////////////////
+
+
+        @Override
+        public InetAddress getPeerIp()
+        {
+            return chann.getPeerIp();
+        }
+
+        @Override
+        public int read(ByteBuffer bb) throws Exception
+        {
+            return chann.read(bb);
+        }
+
+        @Override
+        public Async<Void> awaitReadable(boolean accepting)
+        {
+            return chann.awaitReadable(accepting);
+        }
+
+        @Override
+        public long write(ByteBuffer... srcs) throws Exception
+        {
+            return chann.write(srcs);
+        }
+
+        @Override
+        public Async<Void> awaitWritable()
+        {
+            return chann.awaitWritable();
+        }
+
+        @Override
+        public void shutdownOutput() throws Exception
+        {
+            chann.shutdownOutput();
+        }
+
+        @Override
+        public void close()
+        {
+            chann.close();
+        }
+
+        @Override
+        public Executor getExecutor()
+        {
+            return chann.getExecutor();
+        }
+    }
 
 }

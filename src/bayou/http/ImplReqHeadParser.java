@@ -1,9 +1,9 @@
 package bayou.http;
 
-import _bayou._tmp._ChArr;
-import _bayou._tmp._CharDef;
-import _bayou._tmp._HexUtil;
-import _bayou._tmp._KnownHeaders;
+import _bayou._str._ChArr;
+import _bayou._str._CharDef;
+import _bayou._str._HexUtil;
+import _bayou._tmp.*;
 import bayou.mime.HeaderMap;
 
 import java.nio.ByteBuffer;
@@ -98,14 +98,14 @@ class ImplReqHeadParser
     }
 
     // control exceptions. we don't expect them to be thrown in typical scenarios.
-    static public class NeedMoreBytes extends Exception
+    static public class NeedMoreBytes extends _ControlException
     {
-        private NeedMoreBytes(){ super("need more bytes", null, false, false); }
+        private NeedMoreBytes(){ super("need more bytes"); }
         static final NeedMoreBytes instance = new NeedMoreBytes();
     }
-    static public class FieldTooLong extends Exception
+    static public class FieldTooLong extends _ControlException
     {
-        private FieldTooLong(){ super("field too long", null, false, false); }
+        private FieldTooLong(){ super("field too long"); }
         static final FieldTooLong instance = new FieldTooLong();
     }
     State errTooLong()
@@ -241,7 +241,7 @@ class ImplReqHeadParser
                     // it might surprise a sloppy client. send a more sensible error message.
                     if(!_CharDef.wsp(c))  // probably an illegal char that client intends to have in the uri.
                         return err(HttpStatus.c400_Bad_Request, "Request-URI contains illegal character: position="
-                                +iChar+", char=0x"+ _HexUtil.byte2hex((byte)c));
+                                +iChar+", char=0x"+ _HexUtil.byte2hex((byte) c));
 
                     assert iChar>0; // c==WSP. impossible that iChar==0, or WSP1 had consumed c.
                     request.uri=string();
@@ -377,7 +377,7 @@ class ImplReqHeadParser
                         // a header present with an empty value can be different from a header missing. see `Accept`
 
                         String oldValue = headers.get(currHeaderName);
-                        if(oldValue!=null && !oldValue.isEmpty())   // headers with same name
+                        if(oldValue!=null)   // headers with same name
                             value = oldValue +','+' '+ value;
                         headers.put(currHeaderName, value);
 

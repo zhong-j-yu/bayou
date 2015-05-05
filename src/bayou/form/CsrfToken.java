@@ -1,7 +1,7 @@
 package bayou.form;
 
 import _bayou._log._Logger;
-import _bayou._tmp._CharDef;
+import _bayou._str._CharDef;
 import bayou.html.Html5;
 import bayou.http.Cookie;
 import bayou.http.CookieJar;

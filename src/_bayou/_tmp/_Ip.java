@@ -1,13 +1,22 @@
 package _bayou._tmp;
 
+import _bayou._str._HexUtil;
+
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.Arrays;
 
-import static _bayou._tmp._Util.parseError;
 
 public class _Ip
 {
+    static final _ControlException parseError = new _ControlException("parse error");
+
+    public static InetAddress toInetAddress(String ip)
+    {
+        byte[] bytes = parseIp(ip, 0, ip.length());
+        if(bytes==null) return null;
+        return toInetAddress(bytes);
+    }
+
     public static InetAddress toInetAddress(byte[] bytes)
     {
         try
@@ -19,6 +28,8 @@ public class _Ip
             throw new IllegalArgumentException(e);
         }
     }
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     public static byte[] parseIp(CharSequence chars, int start, int end)
     {

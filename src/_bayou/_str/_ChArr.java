@@ -1,4 +1,4 @@
-package _bayou._tmp;
+package _bayou._str;
 
 // wrapper of char array
 public final class _ChArr

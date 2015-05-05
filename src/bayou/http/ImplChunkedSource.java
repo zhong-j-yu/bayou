@@ -14,11 +14,11 @@ import java.util.ArrayDeque;
 // wrap an origin source stream, create a http chunked stream.
 // internally used. not checking for errors like read after close.
 // origin source can yield small buffers, we accumulate them to form bigger chunks
-class ImplRespChunkedSource implements ByteSource
+class ImplChunkedSource implements ByteSource
 {
     long bufferSize;
     ByteSource originSource;
-    public ImplRespChunkedSource(long bufferSize, ByteSource originSource)
+    public ImplChunkedSource(long bufferSize, ByteSource originSource)
     {
         this.bufferSize = bufferSize;
         this.originSource = originSource;

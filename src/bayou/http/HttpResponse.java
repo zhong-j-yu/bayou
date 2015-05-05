@@ -1,22 +1,21 @@
 package bayou.http;
 
-import _bayou._tmp._CharDef;
-import _bayou._tmp._HttpUtil;
+import _bayou._str._CharDef;
+import _bayou._http._HttpUtil;
 import _bayou._tmp._Util;
 import bayou.async.Async;
 import bayou.file.FileHttpEntity;
 import bayou.gzip.GzipHttpEntity;
 import bayou.html.HtmlDoc;
 import bayou.mime.ContentType;
-import bayou.mime.FileSuffixToContentType;
 import bayou.mime.HeaderMap;
 import bayou.mime.Headers;
 import bayou.mime.TokenParams;
-import bayou.text.TextDoc;
 import bayou.text.TextHttpEntity;
 import bayou.util.function.FunctionX;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Paths;
 import java.util.Date;
 import java.util.List;
@@ -65,20 +64,26 @@ import static bayou.mime.Headers.Accept_Encoding;
 public interface HttpResponse
 {
 
-    // no httpVersion() like in HttpRequest? is it useful?
-    //    currently our server responds with same http version as request 's version.
+    /**
+     * The HTTP version of the response.
+     * <p>
+     *     It should be two integers separated by a dot, e.g. "1.1".
+     * </p>
+     * <p>
+     *     The default implementation returns "1.1".
+     * </p>
+     */
+    default String httpVersion()
+    {
+        return "1.1";
+    }
 
 
     /**
      * Response status.
      * For example, {@link HttpStatus#c200_OK "200 OK"}.
-     * <p>
-     *     This method must not return 1xx status (e.g. "100 Continue");
-     *     1xx responses are handled automatically by underlying libraries.
-     * </p>
      */
     HttpStatus status();
-    // shouldn't be 1xx.  100-continue is handled by server already.  101 not supported.
 
     /**
      * Shorthand for <code>status().code()</code>.
@@ -103,11 +108,11 @@ public interface HttpResponse
      *         Entity metadata should be expressed on the {@link #entity()}.
      *     </li>
      *     <li>
-     *         <code>"Set-Cookie"</code> headers. Cookies are represented in {@link #cookies()}.
-     *     </li>
-     *     <li>
      *         <code>"Content-Length"</code> and <code>"Transport-Encoding"</code> headers.
      *         They are handled automatically by underlying libraries.
+     *     </li>
+     *     <li>
+     *         <code>"Set-Cookie"</code> headers. Cookies are represented in {@link #cookies()}.
      *     </li>
      * </ul>
      * <p>
@@ -133,7 +138,17 @@ public interface HttpResponse
     //   app should avoid giving empty header values
     // can set Connection:close to instruct the server to close the connection after response is written.
     //
-    // no convenience method `header(name)->value`. not used by server app often.
+
+    /**
+     * Get the value of a header.
+     * <p>
+     *     The default implementation returns <code>headers().get(name)</code>.
+     * </p>
+     */
+    default String header(String name)
+    {
+        return headers().get(name);
+    }
 
 
     /**
@@ -159,42 +174,68 @@ public interface HttpResponse
     /**
      * Response entity; null if none.
      * <p>
-     *     A response must have an entity, except in the following cases:
+     *     A response must have an entity, except in the following cases, where entity() should return null:
      * </p>
      * <ul>
      *     <li>
-     *         Status is 204. <code>entity()</code> should return null.
+     *         Status is 1xx, 204, or 304.
      *     </li>
      *     <li>
-     *         Status is 304. <code>entity()</code> should return null.
-     *         However, a server app rarely needs to generate a 304 response,
-     *         because HttpServer usually handles conditional GET requests
-     *         {@link HttpServerConf#autoConditional(boolean) automatically}.
-     *     </li>
-     *     <li>
-     *         Status is 2xx, and the request method is CONNECT. <code>entity()</code> should return null.
-     *     </li>
-     *     <li>
-     *         Status is 1xx. However, this interface forbids 1xx in {@link #status()} anyway.
+     *         Status is 2xx and the request method is CONNECT.
      *     </li>
      * </ul>
      * <p>
      *     If <code>entity()</code> should return null, but returns non-null, the entity should be ignored.
      * </p>
      * <p>
-     *     If the request method is HEAD, the response should contain an entity,
-     *     as it would have for a GET request.
-     *     A server app usually treats HEAD as GET anyway, so this isn't a concern.
-     *     The metadata of the entity will be accessed;
-     *     the body of the entity will not be read or transmitted.
+     *     If the request method is HEAD,
+     *     <code>response.entity()</code> should behave as if the request method is GET,
+     *     with the exception of the body - the recipient of the response must not read the entity body.
      * </p>
      */
     HttpEntity entity();
 
 
+    /**
+     * Get all the bytes of the entity body.
+     * <p>
+     *     See {@link HttpEntity#bodyBytes(int)}.
+     * </p>
+     * <p>
+     *     The response body will be closed when this action completes.
+     * </p>
+     * <p>
+     *     If {@link #entity() entity}==null, this action succeeds with a `null` ByteBuffer.
+     * </p>
+     */
+    default Async<ByteBuffer> bodyBytes(int maxBytes)
+    {
+        HttpEntity entity = entity();
+        if(entity==null)
+            return Async.success(null);
+        return entity.bodyBytes(maxBytes);
+    }
 
-
-
+    /**
+     * Get the entity body as a String.
+     * <p>
+     *     See {@link HttpEntity#bodyString(int)}.
+     * </p>
+     * <p>
+     *     The response body will be closed when this action completes.
+     * </p>
+     * <p>
+     *     If {@link #entity() entity}==null, this action succeeds with a `null` String.
+     * </p>
+     *
+     */
+    default Async<String> bodyString(int maxChars)
+    {
+        HttpEntity entity = entity();
+        if(entity==null)
+            return Async.success(null);
+        return entity.bodyString(maxChars);
+    }
 
 
 
@@ -250,7 +291,7 @@ public interface HttpResponse
      * </p>
      * <p>
      *     The uri can be absolute or relative, for example
-     *     <code>"http://example.com"</code> or <code>"/show?id=123"</code>.
+     *     <code>"http://example.com"</code> or <code>"/show?id=123#frag"</code>.
      * </p>
      */
     static HttpResponseImpl redirect(String uri)
@@ -261,23 +302,32 @@ public interface HttpResponse
     /**
      * Create a "redirect" response.
      * <p>
-     *     The status code can be <code>301/302/303/307</code>.
-     *     A new code <code>308</code> is being proposed but not widely adopted yet.
+     *     The status code can be <code>301/302/303/307/308</code>.
      * </p>
      * <p>
-     *     Choose the status code carefully. In most cases, <code>303</code> is the proper code.
-     *     See also {@link #redirect(String)} which uses 303.
+     *     Choose the status code carefully.
+     *     See <a href="http://tools.ietf.org/html/rfc7231#section-6.4">RFC7231 &sect;6.4</a> for reference.
      * </p>
+     * <ul>
+     *     <li>
+     *         In most use cases, <code>303</code> is the proper code.
+     *         See also {@link #redirect(String)} which uses 303.
+     *     </li>
+     *     <li>
+     *         The semantics of <code>301/302</code> are not clear;
+     *         most clients treat them the same as <code>303</code>. Try not to use them.
+     *     </li>
+     * </ul>
      * <p>
      *     The uri can be absolute or relative, for example
-     *     <code>"http://example.com"</code> or <code>"/show?id=123"</code>.
+     *     <code>"http://example.com"</code> or <code>"/show?id=123#frag"</code>.
      * </p>
      */
     static HttpResponseImpl redirect(HttpStatus status, String uri)
     {
-        if(!_CharDef.check(uri, _CharDef.Uri.legalChars))
+        if(!_CharDef.check(uri, _CharDef.UriLoose.legalChars))
             throw new IllegalArgumentException("invalid uri: "+uri);
-        // not a very thorough validation. but at least all chars are ascii.
+        // not a very thorough validation. but at least it's a legal header value
 
         HttpEntity entity = new TextHttpEntity(ContentType.text_plain_US_ASCII, uri); // all uri chars are ascii
         HttpResponseImpl response = new HttpResponseImpl(status, entity);

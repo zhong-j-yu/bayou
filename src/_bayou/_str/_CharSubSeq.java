@@ -1,4 +1,4 @@
-package _bayou._tmp;
+package _bayou._str;
 
 // usually we don't want to call CharSequence.subSequence(), since its exact behavior is unclear.
 // some impl will copy the chars in range, which we want to avoid.

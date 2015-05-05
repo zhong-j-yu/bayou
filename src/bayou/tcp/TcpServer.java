@@ -106,16 +106,8 @@ public class TcpServer
          *     Different servers/clients can share same selectors or use different selectors.
          * </p>
          */
-        public int[] selectorIds = defaultSelectorIds();
+        public int[] selectorIds = _Tcp.defaultSelectorIds();
 
-        static int[] defaultSelectorIds()
-        {
-            int N = Runtime.getRuntime().availableProcessors();
-            int[] ids = new int[N];
-            for(int i=0; i<N; i++)
-                ids[i] = i;
-            return ids;
-        }
 
         /**
          * Server socket backlog.

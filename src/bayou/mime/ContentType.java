@@ -1,8 +1,7 @@
 package bayou.mime;
 
-import _bayou._tmp._CharDef;
-import _bayou._tmp._StrUtil;
-import _bayou._tmp._Util;
+import _bayou._str._CharDef;
+import _bayou._str._StrUtil;
 
 import java.util.*;
 

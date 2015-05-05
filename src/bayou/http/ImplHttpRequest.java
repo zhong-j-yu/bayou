@@ -23,7 +23,7 @@ class ImplHttpRequest implements HttpRequest
     String method;
     String uri;
     final HeaderMap headers = new HeaderMap();
-    HttpEntity entity;
+    ImplHttpEntity entity;
     boolean sealed; // if sealed, request is good
 
     ImplHttpRequest()
@@ -139,7 +139,7 @@ class ImplHttpRequest implements HttpRequest
     @Override
     public String httpVersion()
     {
-        return (httpMinorVersion==0) ? "HTTP/1.0" : "HTTP/1.1";
+        return (httpMinorVersion==0) ? "1.0" : "1.1";
     }
 
 
@@ -167,14 +167,7 @@ class ImplHttpRequest implements HttpRequest
         // it must be a valid IPv4 or IPv6 address. domain names are not allowed.
         byte[] ipBytes = _Ip.parseIp(xff, 0, xff.length());
         if(ipBytes==null) return;
-        try
-        {
-            ip = InetAddress.getByAddress(ipBytes);
-        }
-        catch (UnknownHostException e) // impossible
-        {
-            return;
-        }
+        ip = _Ip.toInetAddress(ipBytes);
 
         String xfp = headers.get("X-Forwarded-Proto");
         if(xfp==null)
@@ -212,11 +205,6 @@ class ImplHttpRequest implements HttpRequest
 
     long timeReceived;
 
-    // once the response is being written, body can no longer be read.
-    // so we don't support currently reading req and writing response; such app is rare;
-    // most clients are single threaded and can't handle that anyway.
-    boolean responded;
-
     // "HTTP/1.1 100 Continue"
     // 0: not expected, don't send.
     // 1: expected, not sent yet
@@ -224,11 +212,5 @@ class ImplHttpRequest implements HttpRequest
     // 3: sent successfully.
     int state100;
 
-    // 0: no entity, no body
-    // 1: has body, has not been read
-    // 2: body is being read
-    // 3: entire body is read
-    // if body length is known to be 0, set state=3 from the beginning.
-    int stateBody;
 
 }

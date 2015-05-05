@@ -147,7 +147,8 @@ public class TcpClient implements AutoCloseable
     /**
      * Get the executor associated with the selector thread.
      * <p>
-     *     Tasks submitted to the executor will be executed in the selector thread.
+     *     Tasks submitted to the executor will be executed on the selector thread,
+     *     and executed sequentially in the order they are submitted.
      * </p>
      */
     public Executor getExecutor()
@@ -339,7 +340,6 @@ public class TcpClient implements AutoCloseable
             catch (ClosedChannelException e) // impossible
             {    throw new AssertionError(e);   }
 
-            assert Fiber.currentExecutor() == agent.selectorThread;
             connectPromise.onCancel(this::onCancelAwaitConnectable);
         }
         void onCancelAwaitConnectable(Exception reason)

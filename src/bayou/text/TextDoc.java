@@ -1,11 +1,10 @@
 package bayou.text;
 
-import _bayou._tmp._CharSeqSaver;
+import _bayou._str._CharSeqSaver;
 import bayou.mime.ContentType;
 
 import java.nio.charset.Charset;
 import java.util.function.Consumer;
-import java.util.stream.Stream;
 
 /**
  * Textual document, for example text/html, text/plain.

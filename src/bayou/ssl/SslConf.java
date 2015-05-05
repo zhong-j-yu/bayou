@@ -169,7 +169,7 @@ public class SslConf
      *     unless the server needs to validate client certificates with non-standard CAs.
      * </p>
      * <p>
-     *     for client, this field usually can be null,
+     *     For client, this field usually can be null,
      *     unless the client needs to validate server certificates with non-standard CAs.
      * </p>
      * <p>

@@ -14,6 +14,7 @@ class FormDataHttpEntity implements HttpEntity
 {
     String boundary;
     ArrayList<MultipartPart> parts;
+    Long contentLength;
 
     FormDataHttpEntity(Map<String, List<String>> parameters, Map<String, List<FormDataFile>> files, Charset charset)
     {
@@ -21,19 +22,40 @@ class FormDataHttpEntity implements HttpEntity
 
         parts = new ArrayList<>();
 
+        long delimLen = boundary.length() + 6;
+        long length = delimLen;
+
         for(Map.Entry<String,List<String>> x : parameters.entrySet())
         {
             String name = x.getKey();
             for(String value : x.getValue())
-                parts.add( new ParamPart(name, value, charset) );
+            {
+                ParamPart part = new ParamPart(name, value, charset);
+                parts.add(part);
+                length = length + delimLen + headSize(part.headers) + part.valueBytes.length;
+            }
         }
 
         for(Map.Entry<String,List<FormDataFile>> x : files.entrySet())
         {
             String name = x.getKey();
             for(FormDataFile ff : x.getValue())
-                parts.add( new FilePart(name, ff, charset));
+            {
+                FilePart part = new FilePart(name, ff, charset);
+                parts.add(part);
+                length = length + delimLen+ headSize(part.headers) + ff.size();
+            }
         }
+
+        contentLength = length;
+    }
+
+    static long headSize(Map<String,String> headers)
+    {
+        long size = 0;
+        for(Map.Entry<String,String> nv : headers.entrySet())
+            size = size + nv.getKey().length() + nv.getValue().length() + 4;
+        return size+2;
     }
 
     @Override
@@ -45,7 +67,7 @@ class FormDataHttpEntity implements HttpEntity
     @Override
     public Long contentLength()
     {
-        return null;  // we could count it. later. may be necessary if server doesn't support chunked request.
+        return contentLength;
     }
 
     @Override
@@ -79,7 +101,7 @@ class FormDataHttpEntity implements HttpEntity
 
     static class ParamPart implements MultipartPart
     {
-        String hvContentDisposition;
+        Map<String, String> headers;
         byte[] valueBytes;
 
         ParamPart(String name, String value, Charset charset)
@@ -87,7 +109,7 @@ class FormDataHttpEntity implements HttpEntity
             StringBuilder sb = new StringBuilder();
             sb.append("form-data; name=");
             quoted(sb, charset, name);
-            hvContentDisposition = sb.toString();
+            headers = Collections.singletonMap(Headers.Content_Disposition, sb.toString());
 
             valueBytes = value.getBytes(charset); // can be arbitrary bytes
         }
@@ -95,7 +117,7 @@ class FormDataHttpEntity implements HttpEntity
         @Override
         public Map<String, String> headers()
         {
-            return Collections.singletonMap(Headers.Content_Disposition, hvContentDisposition);
+            return headers;
         }
 
         @Override
@@ -115,23 +137,24 @@ class FormDataHttpEntity implements HttpEntity
 
     static class FilePart implements MultipartPart
     {
-        String hvContentDisposition;
-        String hvContentType;
+        Map<String, String> headers;
         Path filePath;
 
         FilePart(String name, FormDataFile ff, Charset charset)
         {
+            headers = new LinkedHashMap<>(2, 0.5f);  // order may matter to receiver
+
             StringBuilder sb = new StringBuilder();
             sb.append("form-data; name=");
             quoted(sb, charset, name);
             sb.append("; filename=");
             quoted(sb, charset, ff.fileName);
-            hvContentDisposition = sb.toString();
+            headers.put(Headers.Content_Disposition, sb.toString());
 
             if(ff.contentType!=null)
-                hvContentType = ff.contentType.toString();  // chars already checked
+                headers.put(Headers.Content_Type, ff.contentType.toString() ); // chars already checked
             else
-                hvContentType = "application/octet-stream"; // to be safe, add a default one
+                headers.put(Headers.Content_Type, "application/octet-stream" ); // to be safe, add a default one
 
             filePath = ff.localPath;
         }
@@ -139,10 +162,7 @@ class FormDataHttpEntity implements HttpEntity
         @Override
         public Map<String, String> headers()
         {
-            LinkedHashMap<String,String> map = new LinkedHashMap<>(2, 0.5f);  // order may matter to receiver
-            map.put(Headers.Content_Disposition, hvContentDisposition);
-            map.put(Headers.Content_Type, hvContentType);
-            return map;
+            return headers;
         }
 
         @Override

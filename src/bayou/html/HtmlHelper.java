@@ -1,6 +1,6 @@
 package bayou.html;
 
-import _bayou._tmp._CharSubSeq;
+import _bayou._str._CharSubSeq;
 
 import java.util.function.Consumer;
 

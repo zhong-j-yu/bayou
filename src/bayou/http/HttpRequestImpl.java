@@ -1,7 +1,7 @@
 package bayou.http;
 
-import _bayou._tmp._HttpHostPort;
-import _bayou._tmp._HttpUtil;
+import _bayou._http._HttpHostPort;
+import _bayou._http._HttpUtil;
 import bayou.form.FormData;
 import bayou.mime.HeaderMap;
 import bayou.mime.Headers;
@@ -33,26 +33,23 @@ public class HttpRequestImpl implements HttpRequest
 
     /**
      * Create an http request.
+     * <p>
+     *     See {@link #uri(String)} for permissible `uri` arguments.
+     *     It's preferred that `uri` is an absolute URI; otherwise,
+     *     the caller should set the {@link bayou.http.HttpRequestImpl#host(String) host} afterwards.
+     * </p>
+     * <p>
+     *     Examples:
+     * </p>
+     * <pre>
+     *     new HttpRequestImpl("GET", "https://example.com/", null);
      *
-     * <div>
-     *     <p  id=uri-arg>
-     *         The <code>`uri`</code> argument can be
-     *     </p>
-     *     <ul>
-     *         <li id=uri-arg-full>
-     *             a full URI like <code>"http://localhost:8080/abc"</code>.<br>
-     *             The URI is parsed to extract <code>isHttps, host, uri</code> properties.
-     *             Note that request {@link #uri()} returns only a partial URI without scheme/host,
-     *             in this example, "/abc". <br> &nbsp;
-     *         </li>
-     *         <li id=uri-arg-partial>
-     *             a partial URI like <code>"/query?term=cat"</code>. It is what {@link #uri()} will return. <br>
-     *             The constructor will set default <code>isHttps=false, host="unknown-host"</code>.
-     *             The request producer may want to change them afterwards, for example,
-     *             <code>new HttpRequestImpl("GET", "/page1", null).host("localhost:8080");</code>
-     *         </li>
-     *     </ul>
-     * </div>
+     *     new HttpRequestImpl("GET", "/search?q=cat", null).host("localhost:8080");
+     *
+     *     new HttpRequestImpl("CONNECT", "proxy.com:8080", null);
+     *
+     *     new HttpRequestImpl("OPTIONS", "*", null).host("example.com");
+     * </pre>
      */
     public HttpRequestImpl(String method, String uri, HttpEntity entity)
     {
@@ -71,7 +68,7 @@ public class HttpRequestImpl implements HttpRequest
 
         // defaults of other fields
         ip = InetAddress.getLoopbackAddress();
-        httpVersion = "HTTP/1.1";
+        httpVersion = "1.1";
     }
 
     /**
@@ -330,13 +327,32 @@ public class HttpRequestImpl implements HttpRequest
     /**
      * Set the request URI.
      * <p>
-     *     This method also accepts absolute URI, e.g. "https://example.com/abc?q",
-     *     which will also affect {@link #isHttps()} and {@link #host()}.
+     *     The behavior of this method depends on the {@link #method(String) request method},
+     *     which should be settled before calling this method.
      * </p>
+     * <p>
+     *     See {@link bayou.http.HttpRequest#uri()} for permissible `uri` arguments.
+     * </p>
+     * <p>
+     *     In addition, this method also accepts {@link bayou.http.HttpRequest#absoluteUri() absolute URI},
+     *     which may change {@link #isHttps(boolean)} and {@link #host(String)} too.
+     * </p>
+     * <p>
+     *     Examples:
+     * </p>
+     * <pre>
+     *     req.uri( "/search?q=cat" );   // path-query
+     *     req.uri( "proxy.com:8080" );  // CONNECT
+     *     req.uri( "*" );               // OPTIONS
+     *
+     *     req.uri( "https://example.com/" );  // absolute URI
+     * </pre>
+     *
+     *
      * @return this
      */
     // no method for setting uri params. use FormData.toGet/PostRequest instead.
-    public HttpRequestImpl uri(String uri)
+    public HttpRequestImpl uri(String uri) throws IllegalArgumentException
     {
         this.uriFormData_volatile=null;
 

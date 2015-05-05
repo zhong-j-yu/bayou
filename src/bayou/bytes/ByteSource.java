@@ -1,11 +1,13 @@
 package bayou.bytes;
 
-import _bayou._tmp._HoehrmannUtf8Decoder;
+import _bayou._str._CharsetDecoder;
+import _bayou._str._HoehrmannUtf8Decoder;
 import bayou.async.Async;
 import bayou.async.AsyncIterator;
 import bayou.util.OverLimitException;
 
 import java.nio.ByteBuffer;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
 
 /**
@@ -85,7 +87,7 @@ public interface ByteSource
      *     The content of the ByteBuffer should be treated as read-only.
      * </p>
      * <p>
-     *     CAUTION: since ByteBuffer is stateful, even for methods like {@link ByteBuffer#get()},
+     *     CAUTION: since ByteBuffer is stateful (even for methods like {@link ByteBuffer#get()}),
      *     a new ByteBuffer must be created for each read() action.
      *     The implementation may create a view of a shared ByteBuffer through
      *     {@link ByteBuffer#asReadOnlyBuffer()}.
@@ -285,14 +287,55 @@ public interface ByteSource
             .forEach(bs::read, decoder::decode)
             .then( v-> { decoder.finish(); return Async.VOID; } )
             .finally_(bs::close)
-            .map( v ->
-            {
-                CharSequence chars = decoder.getChars();
-                // it is a StringBuilder, probably with wasted spaces
-                return chars.toString();
-            });
-
+            .map( v -> decoder.getString() );
     }
+
+
+    /**
+     * Read all bytes from this source and convert them to a String.
+     * <p>
+     *     If the bytes are not a valid encoding of the `charset`, this action fails with
+     *     {@link java.nio.charset.CharacterCodingException}.
+     * </p>
+     * <p>
+     *     If the number of <code>chars</code> exceeds `maxChars`, this action fails with
+     *     an {@link OverLimitException}.
+     *     The `maxChars` parameter is usually a defense against denial-of-service requests.
+     * </p>
+     * <p>
+     *     CAUTION: `maxChars` refers to the number of <em>Java chars</em> here, not <em>unicode characters</em>.
+     * </p>
+     * <p>
+     *     Example Usage:
+     * </p>
+     * <pre>
+     *     ByteSource requestBody = httpRequest.entity().body();
+     *     requestBody.asString(1000, StandardCharsets.UTF_16).then(...);
+     * </pre>
+     * <p>
+     *     This source is automatically closed after `asString()` action is completed (in success or failure).
+     * </p>
+     *
+     * @param maxChars max number of chars expected from this source.
+     */
+    public default Async<String> asString(int maxChars, Charset charset)
+    {
+        if(charset.name().equalsIgnoreCase("UTF-8"))
+            return asString(maxChars); // that impl is better
+
+        final _CharsetDecoder decoder = new _CharsetDecoder(maxChars, charset);
+        final ByteSource bs = this;
+
+        return AsyncIterator
+            .forEach(bs::read, decoder::decode)
+            .then( v-> { decoder.finish(); return Async.VOID; } )
+            .finally_(bs::close)
+            .map( v -> decoder.getString() );
+    }
+
+
+
+
 
     /**
      * Write the bytes from this source to the sink.

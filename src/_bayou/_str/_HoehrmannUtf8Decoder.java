@@ -1,4 +1,4 @@
-package _bayou._tmp;
+package _bayou._str;
 
 // Copyright (c) 2008-2010 Bjoern Hoehrmann <bjoern@hoehrmann.de>
 // See http://bjoern.hoehrmann.de/utf-8/decoder/dfa/ for details.
@@ -92,6 +92,10 @@ public class _HoehrmannUtf8Decoder
     public CharSequence getChars()
     {
         return sb;
+    }
+    public String getString()
+    {
+        return sb.toString();
     }
 
     public void decode(ByteBuffer bb) throws CharacterCodingException, OverLimitException

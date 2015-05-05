@@ -186,7 +186,6 @@ class ChannImpl implements TcpChannel, SelectorThread.OnSelected
             readablePromise = promise;
             agent.toUpdateInterest(this); // to turn on read interest
 
-            assert Fiber.currentExecutor() == selectorThread;
             promise.onCancel( reason -> onCancelAwaitReadable(promise, reason) );
         }
     }
@@ -225,7 +224,6 @@ class ChannImpl implements TcpChannel, SelectorThread.OnSelected
             writablePromise = promise;
             agent.toUpdateInterest(this); // to turn on write interest
 
-            assert Fiber.currentExecutor() == selectorThread;
             promise.onCancel( reason -> onCancelAwaitWritable(promise, reason) );
         }
     }

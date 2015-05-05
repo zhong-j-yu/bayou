@@ -1,4 +1,4 @@
-package _bayou._tmp;
+package _bayou._str;
 
 import java.util.ArrayList;
 import java.util.function.Consumer;

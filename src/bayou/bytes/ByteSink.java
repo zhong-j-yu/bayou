@@ -34,7 +34,7 @@ public interface ByteSink
      *     The sink should treat the content of `bb` as read-only.
      * </p>
      * <p>
-     *     CAUTION: since ByteBuffer is stateful, even for methods like {@link ByteBuffer#get()},
+     *     CAUTION: since ByteBuffer is stateful (even for methods like {@link ByteBuffer#get()}),
      *     a new ByteBuffer must be created for each write() action.
      *     The caller may create a view of a shared ByteBuffer through
      *     {@link java.nio.ByteBuffer#asReadOnlyBuffer()}.

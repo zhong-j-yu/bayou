@@ -1,6 +1,6 @@
 package bayou.text;
 
-import _bayou._tmp._CharSeqSaver;
+import _bayou._str._CharSeqSaver;
 import bayou.bytes.ByteSource;
 import bayou.bytes.SimpleByteSource;
 import bayou.http.HttpEntity;

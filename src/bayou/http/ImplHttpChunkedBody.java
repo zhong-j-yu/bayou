@@ -1,7 +1,7 @@
 package bayou.http;
 
 import _bayou._tmp._ByteBufferUtil;
-import _bayou._tmp._HexUtil;
+import _bayou._str._HexUtil;
 import bayou.ssl.SslConnection;
 import bayou.tcp.TcpConnection;
 import bayou.util.OverLimitException;
@@ -9,16 +9,17 @@ import bayou.util.OverLimitException;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.text.ParseException;
+import java.time.Duration;
 
-class ImplHttpRequestChunkedBody extends ImplHttpRequestEntity.Body
+class ImplHttpChunkedBody extends ImplHttpEntity.Body
 {
     long maxDataLength;
 
-    ImplHttpRequestChunkedBody(ImplConn hConn, ImplHttpRequest request)
+    ImplHttpChunkedBody(TcpConnection tcpConn, Duration confReadTimeout, long minThroughput, long maxDataLength)
     {
-        super(hConn, request);
+        super(tcpConn, confReadTimeout, minThroughput);
 
-        maxDataLength = hConn.conf.requestBodyMaxLength;
+        this.maxDataLength = maxDataLength;
     }
 
     Parser parser = new Parser();
@@ -27,7 +28,11 @@ class ImplHttpRequestChunkedBody extends ImplHttpRequestEntity.Body
 
     long chunkBytesRead;
 
-    long totalBytesRead;
+    @Override
+    public boolean eof()
+    {
+        return parser.state == Parser.State.END;
+    }
 
     @Override
     public ByteBuffer nb_read() throws Exception
@@ -40,11 +45,10 @@ class ImplHttpRequestChunkedBody extends ImplHttpRequestEntity.Body
         {
             while(true)
             {
-                ByteBuffer bb = hConn.nbConn.read(); // throws
+                ByteBuffer bb = tcpConn.read(); // throws
 
                 if(bb== TcpConnection.STALL) // need more framing bytes
                 {
-                    checkThroughput();
                     return TcpConnection.STALL;
                 }
 
@@ -66,13 +70,13 @@ class ImplHttpRequestChunkedBody extends ImplHttpRequestEntity.Body
                 finally
                 {
                     if(bb.hasRemaining()) // very likely
-                        hConn.nbConn.unread(bb);
+                        tcpConn.unread(bb);
                 }
 
                 if(parser.state == Parser.State.DATA)
                 {
                     // check max body length imm after we see each chunk-size
-                    if(totalBytesRead+parser.chunkSize > maxDataLength)
+                    if(bytesRead +parser.chunkSize > maxDataLength)
                     {
                         err = new OverLimitException("confRequestBodyMaxLength", maxDataLength);
                         throw err;
@@ -83,7 +87,6 @@ class ImplHttpRequestChunkedBody extends ImplHttpRequestEntity.Body
                 }
                 if(parser.state == Parser.State.END)
                 {
-                    request.stateBody = 3;
                     break;
                 }
                 // continue
@@ -98,11 +101,10 @@ class ImplHttpRequestChunkedBody extends ImplHttpRequestEntity.Body
         // errors below may be recoverable, hConn remains ok. caller may try read() again, tho unlikely it will.
 
         // DATA
-        ByteBuffer bb = hConn.nbConn.read();
+        ByteBuffer bb = tcpConn.read();
 
         if(bb== TcpConnection.STALL)
         {
-            checkThroughput();
             return TcpConnection.STALL;
         }
 
@@ -115,14 +117,14 @@ class ImplHttpRequestChunkedBody extends ImplHttpRequestEntity.Body
         if(bbBytes<chunkBytesLeft) // more chunk data to come
         {
             chunkBytesRead += bbBytes;
-            totalBytesRead += bbBytes;
+            bytesRead += bbBytes;
             return bb;
         }
 
         // chunk-data ends. prepare for next chunk
         parser.afterChunkData();
         chunkBytesRead = 0;
-        totalBytesRead += chunkBytesLeft;
+        bytesRead += chunkBytesLeft;
 
         // bb contains exactly chunk data, nothing more. probably uncommon
         if(bbBytes==chunkBytesLeft)
@@ -131,24 +133,13 @@ class ImplHttpRequestChunkedBody extends ImplHttpRequestEntity.Body
         // more bytes available than current chunk-data needs. probably common.
         ByteBuffer slice = _ByteBufferUtil.slice(bb, (int)chunkBytesLeft);  // the long->int narrowing is legit
         // bb contains extra bytes, save as leftover, for next read
-        hConn.nbConn.unread(bb);
+        tcpConn.unread(bb);
         return slice;
         // we may consider to try to avoid slice(), by parsing the extra bytes; if we are lucky,
         // they are all framing bytes (say, CRLF after DATA). then we don't need to slice().
         // unsure if that's helpful in practice - unlikely `bb`s preserve boundaries of sender write()s.
     }
 
-    void checkThroughput() throws Exception // (when read stalls)
-    {
-        long time = System.currentTimeMillis() - t0;
-        if(time> 10_000) // don't check in the beginning
-        {
-            long minRead = minThroughput * time / 1000;
-            if(totalBytesRead < minRead)
-                throw new IOException("Client upload throughput too low");
-        }
-        // we only count chunk-data bytes, not any framing bytes
-    }
 
     static class Parser // parser for framing bytes - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
     {

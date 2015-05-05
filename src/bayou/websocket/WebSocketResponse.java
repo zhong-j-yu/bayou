@@ -1,6 +1,6 @@
 package bayou.websocket;
 
-import _bayou._tmp._CharSeqSaver;
+import _bayou._str._CharSeqSaver;
 import bayou.async.Async;
 import bayou.async.AutoAsync;
 import bayou.http.HttpResponse;
@@ -78,7 +78,7 @@ public class WebSocketResponse
         /**
          * Create a Reject response.
          * <p>
-         *     The status code of `httpResponse` must not be 2xx.
+         *     The status code of `httpResponse` must not be 1xx or 2xx.
          * </p>
          */
         public Reject(HttpResponse httpResponse)

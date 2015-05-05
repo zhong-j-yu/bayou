@@ -10,8 +10,8 @@ import java.util.function.Consumer;
 // `dump` is invoked on a single thread. preventing interleaving outputs.
 public class _TrafficDumpWrapper
 {
-    final String name;
-    final Consumer<CharSequence> dump;
+    public final String name;
+    public final Consumer<CharSequence> dump;
 
     // 1 thread, not daemon, expires after 10sec. unbounded queue. tasks are serialized
     final ThreadPoolExecutor serialExec;

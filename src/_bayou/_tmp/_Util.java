@@ -2,6 +2,8 @@ package _bayou._tmp;
 
 import _bayou._log._Logger;
 import bayou.async.Async;
+import bayou.async.Fiber;
+import bayou.async.Promise;
 import bayou.util.End;
 import bayou.util.function.BiFunctionX;
 
@@ -15,10 +17,12 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 public class _Util
@@ -194,6 +198,16 @@ public class _Util
         throw (T)t;
     }
 
-    public static final Exception parseError = new Exception("parse error", null, false, false){};
+    public static int digits(char[] chars, int start, int end)
+    {
+        int x=0;
+        for(int i=start; i<end; i++)
+        {
+            char d = chars[i];
+            if(d<'0'||d>'9') return -1;
+            x = x*10 + (d-'0');
+        }
+        return x;
+    }
 
 }

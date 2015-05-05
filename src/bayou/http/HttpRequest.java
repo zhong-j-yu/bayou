@@ -1,5 +1,6 @@
 package bayou.http;
 
+import _bayou._http._SimpleRequestEntity;
 import bayou.form.FormData;
 import bayou.form.FormParser;
 import bayou.mime.ContentType;
@@ -20,8 +21,6 @@ import java.util.Map;
  * </p>
  */
 
-// later: maybe a common interface HttpMessage for HttpRequest/Response. not sure if it's useful
-// the only things common are headers() and entity().
 
 public interface HttpRequest
 {
@@ -40,8 +39,26 @@ public interface HttpRequest
      *     This value may reflect the <code>"X-Forwarded-Proto"</code> header,
      *     see {@link HttpServerConf#xForwardLevel(int)}.
      * </p>
+     * @see #scheme()
      */
     boolean isHttps();
+
+    /**
+     * The scheme, either "https" or "http".
+     * <p>
+     *     <code>scheme()</code> and <code>isHttps()</code> must be consistent with each other.
+     * </p>
+     * <p>
+     *     The default implementation is
+     * </p>
+     * <pre>
+     *     return isHttps() ? "https" : "http";
+     * </pre>
+     */
+    default String scheme()
+    {
+        return isHttps() ? "https" : "http";
+    }
 
     /**
      * Certificates of the client. See {@link javax.net.ssl.SSLSession#getPeerCertificates()}.
@@ -53,12 +70,21 @@ public interface HttpRequest
      * </p>
      *
      */
-    // we only expose the certs, instead of the whole SSLSession.
-    // other methods in SSLSession are probably uninteresting to app.
     default List<java.security.cert.X509Certificate> certs()
     {
         return Collections.emptyList();
     }
+    // we only expose the certs, instead of the whole SSLSession.
+    // other methods in SSLSession are probably uninteresting to app.
+    //
+    // it's arguable that the SSL session ID can be used as the browser session ID
+    // (because major browsers will try to reuse the same SSL session for multiple connections)
+    // therefore it can be used instead of creating a session-id cookie;
+    // furthermore SSLSession(mutable) can store session data key-value pairs (tho only in this VM).
+    // but the session-id cookie practice is simple, widely understood, and works with HTTP too.
+    //
+    // HttpResponse.certs() is not needed, because the server cert is not very interesting to the client app.
+
 
     /**
      * Request method.
@@ -66,7 +92,7 @@ public interface HttpRequest
      *     Request methods are case sensitive, and typically in all upper cases, e.g. "GET".
      * </p>
      * <p>
-     *     If the method is "HEAD", the server app can usually treat is as "GET".
+     *     If the method is "HEAD", an HttpServer application can usually treat it as "GET".
      * </p>
      * <p>
      *     See also {@link HttpServerConf#supportedMethods(String...)}.
@@ -75,14 +101,21 @@ public interface HttpRequest
     String method();
 
     /**
-     * The "Host" header of the request. May include the port too.
+     * The "Host" header of the request.
      * <p>
-     *     This method must return a non-null, valid <code>"host[:port]"</code> in lower case.
+     *     This method must return a non-null, valid <code>"host[:port]"</code>, in lower case.
      *     e.g. <code>"example.com", "localhost:8080"</code>.
      * </p>
      * <p>
-     *     The "host" part is a domain name, an IPv4, or an IPv6 enclosed in "[]", e.g.
-     *     <code>"example.com", "192.168.68.100", "[2001:db8::ff00:42:8329]"</code>.
+     *     The "host" part could be
+     * </p>
+     * <ul>
+     *     <li>a domain name, e.g. <code>"example.com"</code>, <code>"localhost"</code></li>
+     *     <li>an IPv4 literal, e.g. <code>"192.168.68.100"</code></li>
+     *     <li>an IPv6 literal enclosed in <code>[]</code>, e.g. <code>"[2001:db8::ff00:42:8329]"</code></li>
+     * </ul>
+     * <p>
+     *     The "port" part is mandatory if the request method is "CONNECT".
      * </p>
      * <p>
      *     The default implementation returns <code>header("Host").toLowerCase()</code>.
@@ -97,51 +130,110 @@ public interface HttpRequest
     /**
      * The request URI.
      * <p>
-     *     Typically, the request URI is in the so called
-     *     <a href="http://tools.ietf.org/html/rfc7230#section-5.3.1">origin-form</a>
-     *     that starts with a "/", for example, <code>"/query?term=cat"</code>.
-     *     There are two exceptions, specifically,
+     *     In most cases, <code>uri()</code> returns <b>path-query</b>, which is defined here as
+     *     (in the context of <a href="http://tools.ietf.org/html/rfc7230#section-2.7">RFC7230</a>)
+     * </p>
+     * <pre>
+     *     path-query = absolute-path [ "?" query ]   </pre>
+     * <p>
+     *     for example: <code>"/", "/page1", "/search?q=cat"</code>.
+     *     They are non-empty and always start with "/".
+     * </p>
+     * <p>
+     *     However, there are 2 special cases:
      * </p>
      * <ul>
-     *     <li>
-     *         If the request method is CONNECT, the URI must be identical to {@link #host()},
-     *         in the form of <code>"host:port"</code>; the ":port" part is mandatory here.
-     *         This is the <a href="http://tools.ietf.org/html/rfc7230#section-5.3.3">authority-form</a>.
-     *     </li>
-     *     <li>
-     *         If the request method is OPTIONS, the URI can be either a single "*"
-     *         (the <a href="http://tools.ietf.org/html/rfc7230#section-5.3.4">asterisk-form</a>),
-     *         or in the origin-form.
-     *     </li>
-     *     <li>
-     *         Otherwise, the URI must be in the origin-form.
-     *     </li>
+     *     <li><p>
+     *         for a <a href="http://tools.ietf.org/html/rfc7231#section-4.3.6">"CONNECT"</a> request,
+     *         <code>uri()</code> returns <code>host:port</code>, same as the {@link #host()} method.
+     *     </p></li>
+     *     <li><p>
+     *         for an <a href="http://tools.ietf.org/html/rfc7230#section-5.3.4">"OPTIONS *"</a> request,
+     *         <code>uri()</code> returns "*"
+     *     </p></li>
      * </ul>
      * <p>
-     *     Note that CONNECT and OPTIONS are disabled by default in
-     *     {@link bayou.http.HttpServerConf#supportedMethods(String...)},
-     *     in which case the request URI is always in the origin-form.
+     *     <i>( Note that CONNECT and OPTIONS are disabled by default in
+     *     {@link bayou.http.HttpServerConf#supportedMethods(String...)} )</i>
      * </p>
      * <p>
-     *     The "origin-form" does not contain scheme or host, see {@link #isHttps()} and {@link #host()} instead.
-     *     The "origin-form" must not contain "fragment" (like <code>"/path#frag"</code>).
+     *     The <code>uri()</code> method never returns an absolute URI;
+     *     see {@link #absoluteUri()} instead.
      * </p>
      * <p>
-     *     An HTTP request line could contain an
-     *     <a href="http://tools.ietf.org/html/rfc7230#section-5.3.2">absolute-form</a>
-     *     URI like <code>"GET http://example.com/abc HTTP/1.1"</code>,
-     *     which must be split into
-     *     {@link #host()} and {@link #uri()} for this interface;
-     *     <code>HttpRequest.uri()</code> is never in the absolute-form.
+     *     Our definition of <code>uri()</code> is consistent with
+     *     <i><a href="http://tools.ietf.org/html/rfc2616#section-5.1.2">Request-URI</a></i> in RFC2616,
+     *     as well as
+     *     <i><a href="http://tools.ietf.org/html/rfc7230#section-5.3">request-target</a></i> in RFC7230.
      * </p>
+     *
+     * <p><b>Chars in URI</b></p>
+     * <p>
+     *     We use java <code>String</code> to represent URIs,
+     *     however, a URI is really a sequence of octets.
+     *     Each <code>char</code> in the <code>String </code>
+     *     should be interpreted as a <code>byte</code>. Applications may need to convert the String
+     *     to byte[] (using ISO-8859-1 charset), convert "%HH" to byte `0xHH`, and convert bytes
+     *     to unicode characters (typically as UTF-8).
+     * </p>
+     * <p>
+     *     According to RFC3986, the only allowed octets in  URI path and query are<br>
+     * </p>
+     * <pre>
+     *     ALPHA DIGIT - . _ ~
+     *     ! $ ' &amp; ( ) * + , ; = : @ / ?
+     *     %
+     * </pre>
+     * <p>
+     *     Applications should generate URIs using only these octets for maximum interoperability.
+     *     However, the reality is that major browsers and other HTTP implementations could also
+     *     use other octets in URIs. To accommodate that, our library allows the following octets
+     *     in URI path and query
+     * </p>
+     * <pre>     0x21-0xFF, excluding 0x23(#) </pre>
      *
      */
     String uri();
-    // Request-URI in rfc2616, or "request-target" in new bis draft.
-    // in the spec this part can be in 4 forms, this interface only supports the origin-form: abs-path[?query]
-    //     "*" not supported. the only use case is with OPTION, which is handled by server
-    //     authority-form not supported. the only use case is with CONNECT, which server always rejects
-    //     absolute-form not supported. server always converts it to origin-form
+
+    /**
+     * The absolute request URI.
+     * <p>
+     *     In most cases, absolute URI includes scheme, host, and path-query (see {@link #uri()} doc):
+     * </p>
+     * <pre>
+     *     absoluteUri() = scheme()+"://"+host()+uri() </pre>
+     * <p>
+     *     for example, <code>"https://example.com/", "http://localhost:8080/search?q=cat"</code>
+     * </p>
+     * <p>
+     *     However, in the 2 special cases of
+     *     <a href="http://tools.ietf.org/html/rfc7231#section-4.3.6">"CONNECT"</a> and
+     *     <a href="http://tools.ietf.org/html/rfc7230#section-5.3.4">"OPTIONS *"</a> requests
+     *     (see {@link #uri()} doc)
+     * </p>
+     * <pre>
+     *     absoluteUri() = scheme()+"://"+host() </pre>
+     * <p>
+     *     for example, <code>"https://example.com"</code>. Notice the lack of a trailing slash.
+     * </p>
+     * <p>
+     *     Our definition of <code>absoluteUri()</code> is consistent with
+     *     <i><a href="http://tools.ietf.org/html/rfc7230#section-5.5">Effective Request URI</a></i>
+     *     in RFC7230.
+     * </p>
+     *
+     */
+    default String absoluteUri()
+    {
+        String s = isHttps() ? "https://" : "http://";
+        String host = host(); // non-null
+
+        String uri = uri();
+        if(uri.startsWith("/")) // most common
+            return s+host+uri;
+        else // request must be either "OPTIONS *" or "CONNECT <host>"
+            return s+host;
+    }
 
 
     /**
@@ -189,21 +281,16 @@ public interface HttpRequest
     /**
      * The HTTP version of the request.
      * <p>
-     *     A server app usually has no use of this information, except perhaps for logging.
+     *     It should be two integers separated by a dot, e.g. "1.1".
      * </p>
      * <p>
-     *     The default implementation returns "HTTP/1.1".
+     *     The default implementation returns "1.1".
      * </p>
      */
     default String httpVersion()
     {
-        return "HTTP/1.1";
+        return "1.1";
     }
-    // don't call it simply "version". this method not used often, ok to be verbose
-    // we need this info for access log (common/combined format)
-    // otherwise mostly useless to app.
-    //   when processing request, headers are enough.
-    //   when generating response, can make headers so that both 1.1 and 1.0 clients are happy.
 
 
 
@@ -319,20 +406,23 @@ public interface HttpRequest
     /**
      * Request entity; null if none.
      * <p>
-     *     A <code>GET/HEAD/DELETE</code> request should not have an entity;
-     *     if it does, the server app should ignore the entity.
+     *     There's no strict rules when a request must or must not contain an entity,
+     *     though typically,
      * </p>
+     * <ul>
+     *     <li>
+     *         A <code>GET/HEAD/DELETE</code> request should not have an entity
+     *     </li>
+     *     <li>
+     *         A <code>POST/PUT</code> request should have an entity
+     *     </li>
+     * </ul>
      * <p>
-     *     A <code>POST/PUT</code> request should have an entity;
-     *     if it does not, the server app should reject the request.
-     * </p>
-     * <p>
-     *     A server app can read a request's entity body only once.
+     *     The recipient of a request needs to prepare for the possibility
+     *     that <code>request.entity()==null</code> (even for POST/PUT).
      * </p>
      */
     HttpEntity entity();
-    // sharable? for client app
-    // server app: do not read the body after the response is generated
 
 
 
@@ -375,10 +465,11 @@ public interface HttpRequest
     /**
      * Create a GET request.
      * <p>
-     *     See <a href="HttpRequestImpl.html#uri-arg">explanation on uri</a>.
+     *     `uri` can be absolute (preferred) or just {@link #uri() path-query}.
+     *     If not absolute, the caller should set the {@link bayou.http.HttpRequestImpl#host(String) host} afterwards.
      * </p>
      * <p>
-     *     Example Usage:
+     *     Examples:
      * </p>
      * <pre>
      *     HttpRequest.toGet("http://example.com");
@@ -398,7 +489,8 @@ public interface HttpRequest
      *     The request contains an entity with the specified Content-Type and body.
      * </p>
      * <p>
-     *     See <a href="HttpRequestImpl.html#uri-arg">explanation on uri</a>.
+     *     `uri` can be absolute (preferred) or just {@link #uri() path-query}.
+     *     If not absolute, the caller should set the {@link bayou.http.HttpRequestImpl#host(String) host} afterwards.
      * </p>
      * <p>
      *     Example usage:
@@ -418,7 +510,7 @@ public interface HttpRequest
     public static HttpRequestImpl toPost(String uri, String entityContentType, byte[] entityBody)
     {
         ContentType ct = ContentType.parse(entityContentType); // throws
-        SimpleHttpEntity entity = new SimpleHttpEntity(ct, entityBody);
+        SimpleHttpEntity entity = new _SimpleRequestEntity(ct, entityBody);
         return new HttpRequestImpl("POST", uri, entity);
     }
 

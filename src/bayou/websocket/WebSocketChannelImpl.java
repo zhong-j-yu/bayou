@@ -19,7 +19,7 @@ class WebSocketChannelImpl implements WebSocketChannel
     // we don't really worry about lock contention. usually all actions are done on the selector flow.
 
     final WebSocketServerConf conf;
-    final TcpConnection nbConn;
+    final TcpConnection tcpConn;
 
     final _TrafficDumpWrapper dump;
 
@@ -29,24 +29,24 @@ class WebSocketChannelImpl implements WebSocketChannel
     final Promise<Void> closePromise;
 
     Executor pumpExec;
-    // we must run pumps in a fiber, instead of simply in nbConn executor,
+    // we must run pumps in a fiber, instead of simply in tcpConn executor,
     // because otherwise some API (e.g. Async.onCompletion) would dispatch to the default executor.
 
-    WebSocketChannelImpl(WebSocketServer server, TcpConnection nbConn, ByteBuffer handshakeResponse)
+    WebSocketChannelImpl(WebSocketServer server, TcpConnection tcpConn, ByteBuffer handshakeResponse)
     {
         this.conf = server.conf;
         this.dump = conf.trafficDumpWrapper;
-        this.nbConn = nbConn;
+        this.tcpConn = tcpConn;
 
         if(dump!=null)
             dump.print(
-                "== connection #", ""+nbConn.getId(), " upgraded to websocket ==\r\n",
+                "== connection #", ""+ tcpConn.getId(), " upgraded to websocket ==\r\n",
                 _ByteBufferUtil.toLatin1String(handshakeResponse),
-                connId(), " open [", nbConn.getPeerIp().getHostAddress(), "] ==\r\n"
+                connId(), " open [", tcpConn.getPeerIp().getHostAddress(), "] ==\r\n"
             );
 
-        outbound = new WebSocketOutbound(this, server, nbConn, handshakeResponse);
-        inbound = new WebSocketInbound(this, server, nbConn, outbound);
+        outbound = new WebSocketOutbound(this, server, tcpConn, handshakeResponse);
+        inbound = new WebSocketInbound(this, server, tcpConn, outbound);
 
         closePromise = new Promise<>();
         closePromise.fiberTracePop();
@@ -57,7 +57,7 @@ class WebSocketChannelImpl implements WebSocketChannel
         if(Fiber.enableTrace)
         {
             // don't run pumps in chann handler fiber; they'll mess up the stack trace
-            new Fiber<>( nbConn.getExecutor(), fiberName()+" - background", () ->
+            new Fiber<>( tcpConn.getExecutor(), fiberName()+" - background", () ->
             {
                 pumpExec = Fiber.current().getExecutor();
                 outbound.pump();
@@ -68,13 +68,13 @@ class WebSocketChannelImpl implements WebSocketChannel
                 // well, let's rather show this fiber, it might be interesting to users.
             });
 
-            new Fiber<>( nbConn.getExecutor(), fiberName(), ()->
+            new Fiber<>( tcpConn.getExecutor(), fiberName(), ()->
                 channHandler.apply(this)
             );
         }
         else // no fiber trace, so it's ok to run pump flows in chann handler fiber
         {
-            new Fiber<>( nbConn.getExecutor(), fiberName(), ()->
+            new Fiber<>( tcpConn.getExecutor(), fiberName(), ()->
             {
                 pumpExec = Fiber.current().getExecutor();
                 outbound.pump();
@@ -111,8 +111,8 @@ class WebSocketChannelImpl implements WebSocketChannel
     //     error
     //     close-frame received/sent
     //     close() (by chann.close())
-    // after each retires, it calls chann.nbConn_close() once.
-    // after both calls chann.nbConn_close(), nbConn is really closed.
+    // after each retires, it calls chann.tcpConn_close() once.
+    // after both calls chann.tcpConn_close(), tcpConn is really closed.
 
     @Override
     public Async<Void> close()
@@ -132,20 +132,20 @@ class WebSocketChannelImpl implements WebSocketChannel
         return promise;
     }
 
-    byte nbConnCloseCount;
-    void nbConn_close(boolean graceful)
+    byte tcpConnCloseCount;
+    void tcpConn_close(boolean graceful)
     {
         // this method is called once by inbound and once by outbound
         // we'll close for real on the 2nd call. `graceful` is AND-ed.
         final int T=3, F=4;
-        byte _nbConnCloseCount;
+        byte _tcpConnCloseCount;
         synchronized (lock())
         {
-            nbConnCloseCount += ( graceful ? T : F );
-            _nbConnCloseCount = nbConnCloseCount;
+            tcpConnCloseCount += ( graceful ? T : F );
+            _tcpConnCloseCount = tcpConnCloseCount;
         }
         boolean grace;
-        switch (_nbConnCloseCount)
+        switch (_tcpConnCloseCount)
         {
             case T:
             case F:
@@ -164,12 +164,12 @@ class WebSocketChannelImpl implements WebSocketChannel
                 throw new AssertionError();
         }
 
-        Async<Void> nbConnClosing = nbConn.close( grace ? conf.closeTimeout : null );
+        Async<Void> tcpConnClosing = tcpConn.close( grace ? conf.closeTimeout : null );
 
-        if(nbConnClosing.isCompleted()) // not rare
-            closePromise.complete(nbConnClosing.pollResult());
+        if(tcpConnClosing.isCompleted()) // not rare
+            closePromise.complete(tcpConnClosing.pollResult());
         else
-            nbConnClosing.onCompletion(closePromise::complete); // propagate cancel? promise->nbConn
+            tcpConnClosing.onCompletion(closePromise::complete); // propagate cancel? promise->tcpConn
 
         if(dump!=null)
             dump.print(connId(), " closed", " == \r\n");
@@ -182,14 +182,14 @@ class WebSocketChannelImpl implements WebSocketChannel
 
     String connId()
     {
-        return "== " + ((nbConn instanceof SslConnection)?"wss":"ws") + " connection #" + nbConn.getId();
+        return "== " + ((tcpConn instanceof SslConnection)?"wss":"ws") + " connection #" + tcpConn.getId();
     }
     String fiberName()
     {
         StringBuilder sb = new StringBuilder();
-        sb.append((nbConn instanceof SslConnection)?"wss":"ws")
-            .append(" connection #").append(nbConn.getId())
-            .append(" [").append(nbConn.getPeerIp().getHostAddress()).append("]");
+        sb.append((tcpConn instanceof SslConnection)?"wss":"ws")
+            .append(" connection #").append(tcpConn.getId())
+            .append(" [").append(tcpConn.getPeerIp().getHostAddress()).append("]");
         return sb.toString();
     }
 

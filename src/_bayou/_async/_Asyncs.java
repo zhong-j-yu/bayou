@@ -112,6 +112,13 @@ public class _Asyncs
             return new ConsumerInExecutor<>(Fiber.currentExecutor(), consumer);
     }
 
+    // todo: expose this to user, as Async.onCompletion(executor, callback). note its danger.
+    public static <T> void onCompletion(Async<T> async, Executor executor, Consumer<Result<T>> callback)
+    {
+        callback = new ConsumerInExecutor<>(executor, callback);
+        async.onCompletion(callback); // which calls bindToCurrExec()
+    }
+
     // if pending, **block** till completed.
     //    no timeout parameter. try await( async.timeout(...) )
     //    if interrupted while being blocked, cancel(interruptedException) is called on async,

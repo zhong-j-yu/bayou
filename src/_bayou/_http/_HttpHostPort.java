@@ -1,7 +1,10 @@
-package _bayou._tmp;
+package _bayou._http;
 
 // host[:port]
 // host = domain / ipv4 / "[" ipv6 "]"
+
+import _bayou._tmp._Dns;
+import _bayou._tmp._Ip;
 
 import java.net.Inet6Address;
 import java.net.InetAddress;
@@ -29,6 +32,14 @@ public class _HttpHostPort
             s = s + ":" + port;
 
         return s;
+    }
+
+    public String hostString()
+    {
+        if(domain!=null)
+            return domain;
+        else
+            return _Ip.toInetAddress(ip).getHostAddress();
     }
 
     public static _HttpHostPort parse(String string)

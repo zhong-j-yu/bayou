@@ -15,7 +15,7 @@ import java.util.function.Consumer;
 
 class AsyncConnectionImpl implements AsyncConnection
 {
-    final TcpConnection nbConn;
+    final TcpConnection tcpConn;
 
     // read/write flows are independent
 
@@ -30,15 +30,15 @@ class AsyncConnectionImpl implements AsyncConnection
     long writeN, writeW;
 
 
-    public AsyncConnectionImpl(TcpConnection nbConn)
+    public AsyncConnectionImpl(TcpConnection tcpConn)
     {
-        this.nbConn = nbConn;
+        this.tcpConn = tcpConn;
     }
 
     @Override
     public InetAddress getRemoteIp()
     {
-        return nbConn.getPeerIp();
+        return tcpConn.getPeerIp();
     }
 
     // -- read --
@@ -64,7 +64,7 @@ class AsyncConnectionImpl implements AsyncConnection
         ByteBuffer bb;
         try
         {
-            bb = nbConn.read();
+            bb = tcpConn.read();
         }
         catch (Exception e)
         {
@@ -82,12 +82,12 @@ class AsyncConnectionImpl implements AsyncConnection
         // STALL
         pendingRead = new Promise<>();
         acceptingRead = accepting;
-        Async<Void> await = nbConn.awaitReadable(accepting);
+        Async<Void> await = tcpConn.awaitReadable(accepting);
         pendingRead.onCancel(await::cancel);
         await.onCompletion(cbReadable);
         return pendingRead;
     }
-    TcpConnection this_nbConn(){ return this.nbConn; } // to overcome IntelliJ lambda bug
+    TcpConnection this_tcpConn(){ return this.tcpConn; } // to overcome IntelliJ lambda bug
     final Consumer<Result<Void>> cbReadable = result -> {
         ByteBuffer bb=null;
         Exception error=null;
@@ -101,7 +101,7 @@ class AsyncConnectionImpl implements AsyncConnection
 
                 result.getOrThrow(); // throws
 
-                bb = this_nbConn().read(); // throws
+                bb = this_tcpConn().read(); // throws
 
                 if(bb== TcpConnection.TCP_FIN)
                     throw End.instance();
@@ -110,7 +110,7 @@ class AsyncConnectionImpl implements AsyncConnection
 
                 if(bb== TcpConnection.STALL) // spurious wakeup from awaitReadable(). await again
                 {
-                    Async<Void> await = this_nbConn().awaitReadable(acceptingRead);
+                    Async<Void> await = this_tcpConn().awaitReadable(acceptingRead);
                     pendingRead.onCancel(await::cancel);
                     await.onCompletion(this.cbReadable);
                     return;
@@ -147,7 +147,7 @@ class AsyncConnectionImpl implements AsyncConnection
             if(pendingRead!=null)
                 throw new IllegalStateException("there is a pending read");
 
-            nbConn.unread(bb);
+            tcpConn.unread(bb);
         }
     }
 
@@ -161,7 +161,7 @@ class AsyncConnectionImpl implements AsyncConnection
             if(closedW)
                 throw new IllegalStateException("closed");
 
-            return nbConn.getWriteQueueSize();
+            return tcpConn.getWriteQueueSize();
         }
     }
 
@@ -173,7 +173,7 @@ class AsyncConnectionImpl implements AsyncConnection
             if(closedW)
                 throw new IllegalStateException("closed");
 
-            return nbConn.queueWrite(bb);
+            return tcpConn.queueWrite(bb);
         }
     }
 
@@ -191,7 +191,7 @@ class AsyncConnectionImpl implements AsyncConnection
             if(n<=0)
                 throw new IllegalArgumentException("n<=0");
 
-            if(n>nbConn.getWriteQueueSize())
+            if(n> tcpConn.getWriteQueueSize())
                 throw new IllegalArgumentException("n>getWriteQueueSize()");
 
             return write1(n);
@@ -202,7 +202,7 @@ class AsyncConnectionImpl implements AsyncConnection
         long w;
         try
         {
-            w = nbConn.write();  // write as much as possible without blocking
+            w = tcpConn.write();  // write as much as possible without blocking
         }
         catch (Exception e)
         {
@@ -216,7 +216,7 @@ class AsyncConnectionImpl implements AsyncConnection
         pendingWrite = new Promise<>();
         writeN = n;
         writeW = w;
-        Async<Void> await = nbConn.awaitWritable();
+        Async<Void> await = tcpConn.awaitWritable();
         pendingWrite.onCancel(await::cancel);
         await.onCompletion(onWritable);
         return pendingWrite;
@@ -233,12 +233,12 @@ class AsyncConnectionImpl implements AsyncConnection
 
                 result.getOrThrow(); // throws
 
-                writeW += this_nbConn().write(); // throws
+                writeW += this_tcpConn().write(); // throws
 
                 boolean done = (writeW>=writeN);
                 if(!done) // await then write again
                 {
-                    Async<Void> await = this_nbConn().awaitWritable();
+                    Async<Void> await = this_tcpConn().awaitWritable();
                     pendingWrite.onCancel(await::cancel);
                     await.onCompletion(this.onWritable);
                     return;
@@ -272,7 +272,7 @@ class AsyncConnectionImpl implements AsyncConnection
     @Override
     public Executor getExecutor()
     {
-        return nbConn.getExecutor();
+        return tcpConn.getExecutor();
     }
 
     @Override
@@ -301,7 +301,7 @@ class AsyncConnectionImpl implements AsyncConnection
             _pendingWrite.cancel(new Exception("cancelled"));
 
 
-        // it is safe to call nbConn.close() now. closedR/W are set, r/w flows will not operate on nbConn any more.
-        nbConn.close(drainTimeout);
+        // it is safe to call tcpConn.close() now. closedR/W are set, r/w flows will not operate on tcpConn any more.
+        tcpConn.close(drainTimeout);
     }
 }

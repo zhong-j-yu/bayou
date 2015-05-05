@@ -1,7 +1,7 @@
 package bayou.websocket;
 
 import _bayou._log._Logger;
-import _bayou._tmp._HttpUtil;
+import _bayou._http._HttpUtil;
 import _bayou._tmp._Util;
 import bayou.async.Async;
 import bayou.http.*;
@@ -117,6 +117,7 @@ public class WebSocketServer
         try
         {
             wsRequest = new WebSocketRequest(httpRequest);  // validate various fields
+            // note: will reject if request contains body
         }
         catch (IllegalArgumentException e) // rare
         {

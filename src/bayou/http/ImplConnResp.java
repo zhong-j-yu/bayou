@@ -1,6 +1,6 @@
 package bayou.http;
 
-import _bayou._tmp._CharSeqSaver;
+import _bayou._str._CharSeqSaver;
 import _bayou._tmp._Util;
 import bayou.async.Async;
 import bayou.bytes.ByteSource;
@@ -23,10 +23,10 @@ import static bayou.http.ImplConn.Goto;
 class ImplConnResp
 {
     ImplConn hConn;
-    TcpConnection nbConn;
+    TcpConnection tcpConn;
     HttpResponseImpl response;
     boolean isLast;
-    int httpMinorVersion;   // 0 or 1. -1 if request parse error
+    int req_httpMinorVersion;   // 0 or 1. -1 if request parse error
 
     long highMark;
     long minThroughput; // >=0
@@ -41,13 +41,13 @@ class ImplConnResp
     long writeT0;
 
     ImplConnResp(ImplConn hConn, HttpResponseImpl response, boolean isLast,
-                 int httpMinorVersion, ByteSource body, long bodyLength)
+                 int req_httpMinorVersion, ByteSource body, long bodyLength)
     {
         this.hConn = hConn;
-        nbConn = hConn.nbConn;
+        tcpConn = hConn.tcpConn;
         this.response = response;
         this.isLast = isLast;
-        this.httpMinorVersion = httpMinorVersion;
+        this.req_httpMinorVersion = req_httpMinorVersion;
 
         highMark = hConn.conf.outboundBufferSize;
         minThroughput = hConn.conf.writeMinThroughput;
@@ -61,9 +61,9 @@ class ImplConnResp
     {
         writeT0 = System.currentTimeMillis();
 
-        long r0 = nbConn.getWriteQueueSize(); // should be 0
+        long r0 = tcpConn.getWriteQueueSize(); // should be 0
         queueHead(response.status, response.headers, response.headersSetCookie());
-        headLength = nbConn.getWriteQueueSize() - r0;
+        headLength = tcpConn.getWriteQueueSize() - r0;
 
         // head is not written yet; will do it together with body,
         // even if head is bigger than confResponseBufferSize (unlikely).
@@ -74,9 +74,12 @@ class ImplConnResp
 
     void printHead(_CharSeqSaver out, HttpStatus status, HeaderMap headers, List<String> headersSetCookie)
     {
-        // response version same as request version. is that necessary? why not always respond HTTP/1.1?
-        String HTTP1xSP = httpMinorVersion==0? "HTTP/1.0 " : "HTTP/1.1 ";
-        out.append(HTTP1xSP).append(status.toString()).append("\r\n");  // status chars were checked
+        String ver = response.httpVersion();
+        if(req_httpMinorVersion==0) ver = "1.0";
+        // not sure how the 1.0 client reacts to a higher version response; send the same version instead.
+
+        out.append("HTTP/").append(ver).append(" ")
+            .append(status.toString()).append("\r\n");  // status chars were checked
 
         for(Map.Entry<String,String> nv : headers.entrySet())
         {
@@ -93,9 +96,9 @@ class ImplConnResp
 
     void queueHead(HttpStatus status, HeaderMap headers, List<String> headersSetCookie)
     {
-        _CharSeqSaver chars = new _CharSeqSaver( 4 + 4*headers.size() + 4*headersSetCookie.size() );
+        _CharSeqSaver chars = new _CharSeqSaver( 6 + 4*headers.size() + 4*headersSetCookie.size() );
         printHead(chars, status, headers, headersSetCookie);
-        nbConn.queueWrite(ByteBuffer.wrap(chars.toLatin1Bytes()));
+        tcpConn.queueWrite(ByteBuffer.wrap(chars.toLatin1Bytes()));
     }
 
     void dumpResp()
@@ -135,7 +138,7 @@ class ImplConnResp
 
             long remaining;
             try
-            {   remaining = nbConn_write();   }
+            {   remaining = tcpConn_write();   }
             catch (Exception e)
             {   return connErr(e);   }
 
@@ -156,7 +159,7 @@ class ImplConnResp
                 //    is the sink, proactively read and queue source bytes won't change that.
                 // after sink becomes writable, we'll do pipe again, retesting source read completion status,
                 // source may still stall, but sink makes progress by draining some/all queued writes.
-                return nbConn_uponWritable(Goto.respPipeBody);  // -> pipeBody -> [read]
+                return tcpConn_uponWritable(Goto.respPipeBody);  // -> pipeBody -> [read]
             }
         }
         // [read complete]
@@ -190,9 +193,9 @@ class ImplConnResp
 
         // we got some bytes from the body. ( fine if bb.length()==0 )
         bodyTotal += bb.remaining();
-        long writeRemaining = nbConn.queueWrite(bb);
+        long writeRemaining = tcpConn.queueWrite(bb);
         // bb will be closed after it's written; if it didn't get written due to connErr or serious bodyErr,
-        // it'll be closed very soon when nbConn.close()
+        // it'll be closed very soon when tcpConn.close()
 
         if(bodyLength >= 0)
         {
@@ -226,12 +229,12 @@ class ImplConnResp
     long bodyTotal;
     long readStallT0;
     long readStallTime;
-    long nbConn_write() throws Exception  // return bytes remaining, not bytes written
+    long tcpConn_write() throws Exception  // return bytes remaining, not bytes written
     {
-        long w = nbConn.write(); // throws
+        long w = tcpConn.write(); // throws
         writtenTotal += w;
 
-        long remain = nbConn.getWriteQueueSize();
+        long remain = tcpConn.getWriteQueueSize();
         if(remain>0) // check throughput when write stalls
         {
             long timeSpent = System.currentTimeMillis() - writeT0 - readStallTime;  // exclude our read stall time.
@@ -274,9 +277,9 @@ class ImplConnResp
         return Goto.respPipeBody;
     }
 
-    Goto nbConn_uponWritable(final Goto g)
+    Goto tcpConn_uponWritable(final Goto g)
     {
-        nbConn.awaitWritable().timeout(writeTimeout)
+        tcpConn.awaitWritable().timeout(writeTimeout)
             .onCompletion(result -> {
                 Exception error = result.getException();
                 if (error != null)
@@ -291,12 +294,12 @@ class ImplConnResp
     {
         long remaining;
         try
-        {   remaining = nbConn_write();   }
+        {   remaining = tcpConn_write();   }
         catch (Exception e)
         {   return connErr(e);   }
 
         if(remaining> highMark)
-            return nbConn_uponWritable(Goto.respDrainMark);  // loop drainMark
+            return tcpConn_uponWritable(Goto.respDrainMark);  // loop drainMark
         else
             return Goto.respPipeBody;
     }
@@ -308,8 +311,8 @@ class ImplConnResp
         // must append CLOSE_NOTIFY and FIN if this is the last response
         if(isLast)
         {
-            nbConn.queueWrite(SslConnection.SSL_CLOSE_NOTIFY);
-            nbConn.queueWrite(TcpConnection.TCP_FIN);
+            tcpConn.queueWrite(SslConnection.SSL_CLOSE_NOTIFY);
+            tcpConn.queueWrite(TcpConnection.TCP_FIN);
         }
 
         return Goto.respFlushAll;
@@ -320,12 +323,12 @@ class ImplConnResp
     {
         long remaining;
         try
-        {   remaining = nbConn_write();   }
+        {   remaining = tcpConn_write();   }
         catch (Exception e)
         {   return connErr(e);   }
 
         if(remaining>0)
-            return nbConn_uponWritable(Goto.respFlushAll);  // loop flushAll
+            return tcpConn_uponWritable(Goto.respFlushAll);  // loop flushAll
         else // all flushed. no connErr. maybe prev benign bodyErr
             return Goto.respEnd;
     }

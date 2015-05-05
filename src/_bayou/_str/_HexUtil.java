@@ -1,4 +1,4 @@
-package _bayou._tmp;
+package _bayou._str;
 
 import java.util.Arrays;
 
@@ -66,5 +66,9 @@ public class _HexUtil
             sb.append(byte2hexLo(b));
         }
         return sb.toString();
+    }
+    public static String toHexString(byte[] bytes)
+    {
+        return toHexString(bytes, 0, bytes.length);
     }
 }

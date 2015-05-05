@@ -1,11 +1,8 @@
 package bayou.http;
 
-import _bayou._tmp._HttpUtil;
+import _bayou._http._HttpUtil;
 import _bayou._tmp._Util;
-import bayou.async.Async;
 import bayou.async.AutoAsync;
-import bayou.bytes.ByteSource;
-import bayou.mime.ContentType;
 import bayou.mime.HeaderMap;
 
 import java.lang.NullPointerException;
@@ -13,7 +10,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
+import java.util.Objects;
 
 /**
  * A mutable implementation of HttpResponse.
@@ -45,6 +42,7 @@ public class HttpResponseImpl implements HttpResponse, AutoAsync<HttpResponse>
     // we don't do HttpResponse extends AutoAsync<HttpResponse> because it is more confusing. only impl is auto async.
 
 
+    String httpVersion;
     HttpStatus status;
     HttpEntity entity;
     HeaderMap headers;
@@ -57,12 +55,11 @@ public class HttpResponseImpl implements HttpResponse, AutoAsync<HttpResponse>
      */
     public HttpResponseImpl(HttpStatus status, HttpEntity entity)
     {
-        // should we check status!=1xx, and entity!=null(if not 204/304 response)?
-        // allow users to do that here?
+        this.httpVersion = "1.1";
         this.status = status;
         this.entity = entity;
-        headers = new HeaderMap();
-        cookies = new ArrayList<>();
+        this.headers = new HeaderMap();
+        this.cookies = new ArrayList<>();
     }
 
     /**
@@ -75,10 +72,22 @@ public class HttpResponseImpl implements HttpResponse, AutoAsync<HttpResponse>
      */
     public HttpResponseImpl(HttpResponse originResponse)
     {
-        this(originResponse.status(), originResponse.entity());
-
+        this.httpVersion = originResponse.httpVersion();
+        this.status = originResponse.status();
+        this.entity = originResponse.entity();
+        this.headers = new HeaderMap();
+        this.cookies = new ArrayList<>();
         this.headers.putAll(originResponse.headers());
         this.cookies.addAll(originResponse.cookies());
+    }
+
+    /**
+     * Get the HTTP version.
+     */
+    @Override
+    public String httpVersion()
+    {
+        return httpVersion;
     }
 
     /**
@@ -146,7 +155,6 @@ public class HttpResponseImpl implements HttpResponse, AutoAsync<HttpResponse>
      */
     public HttpResponseImpl status(HttpStatus status)
     {
-        // we don't validate status? e.g. it cannot be 1xx.
         this.status = status;
         return this;
     }
@@ -207,7 +215,7 @@ public class HttpResponseImpl implements HttpResponse, AutoAsync<HttpResponse>
         for(int i=0; i<cookies.size(); i++)
         {
             Cookie prev = cookies.get(i);
-            if(prev.sameId(cookie))
+            if(sameCookieId(prev, cookie))
             {
                 cookies.set(i, cookie); // replace prev
                 return this;
@@ -217,6 +225,14 @@ public class HttpResponseImpl implements HttpResponse, AutoAsync<HttpResponse>
         cookies.add(cookie);
         return this;
     }
+
+    static boolean sameCookieId(Cookie c1, Cookie c2)
+    {
+        return Objects.equals(c1.name,   c2.name)
+            && Objects.equals(c1.domain, c2.domain)
+            && Objects.equals(c1.path,   c2.path);
+    }
+
 
     // values for Set-Cookie headers.
     List<String> headersSetCookie()
@@ -298,11 +314,5 @@ public class HttpResponseImpl implements HttpResponse, AutoAsync<HttpResponse>
     }
 
 
-    static Async<HttpResponse> toAsync(HttpResponse response)
-    {
-        if(response instanceof HttpResponseImpl) // common
-            return (HttpResponseImpl)response;
-        return Async.success(response);
-    }
 
 }

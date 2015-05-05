@@ -1,6 +1,7 @@
 package bayou.tcp;
 
 import _bayou._tmp._ByteBufferPool;
+import _bayou._tmp._Tcp;
 import bayou.util.function.FunctionX;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -27,15 +28,10 @@ public class TcpChannel2Connection
      *        preferred buffer size for calling {@link bayou.tcp.TcpChannel#read(java.nio.ByteBuffer)}.
      * @param writeBufferSize
      *        preferred buffer size for calling {@link bayou.tcp.TcpChannel#write(java.nio.ByteBuffer...)}.
-     * @param idGenerator
-     *        generator for {@link bayou.tcp.TcpConnection#getId() TcpConnection id}.
      */
-    public TcpChannel2Connection(int readBufferSize, int writeBufferSize, Supplier<Long> idGenerator)
+    public TcpChannel2Connection(int readBufferSize, int writeBufferSize)
     {
-        if(idGenerator==null)
-            idGenerator = new AtomicLong(1)::getAndIncrement;
-
-        this.idGenerator = idGenerator;
+        this.idGenerator = _Tcp.idGenerator;
 
         // read/writeBufferSize - not to be confused with socket receive/send buffer size.
         plainReadBufferPool  = _ByteBufferPool.forCapacity(readBufferSize);

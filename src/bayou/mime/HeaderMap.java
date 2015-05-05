@@ -1,7 +1,7 @@
 package bayou.mime;
 
 import _bayou._tmp._KnownHeaders;
-import _bayou._tmp._StrCi;
+import _bayou._str._StrCi;
 
 import java.util.*;
 
@@ -25,11 +25,20 @@ public class HeaderMap implements Map<String,String>
     //    or later, e.g. when generating response
 
     /**
-     * Create a HeaderMap instance.
+     * Create an empty HeaderMap instance.
      */
     public HeaderMap()
     {
 
+    }
+
+    /**
+     * Create a HeaderMap instance, populated by `m`.
+     */
+    public HeaderMap(Map<String,String> m)
+    {
+        this();
+        putAll(m);
     }
 
     /**
