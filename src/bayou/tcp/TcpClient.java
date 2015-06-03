@@ -372,7 +372,13 @@ public class TcpClient implements AutoCloseable
 
             try
             {
-                socketChannel.finishConnect(); // throws
+                boolean done = socketChannel.finishConnect(); // throws
+                // we expect that it's true. but just in case
+                if(!done)
+                {
+                    socketChannel.close();
+                    throw new Exception("unexpected: finishConnect() returns false");
+                }
             }
             catch (Exception e) // connect failed
             {

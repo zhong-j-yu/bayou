@@ -1,19 +1,15 @@
 package bayou.http;
 
 import _bayou._http._HttpHostPort;
-import _bayou._tmp._PublicSuffix;
-import _bayou._tmp._Util;
+import _bayou._tmp._Dns;
 import bayou.async.Async;
-import bayou.util.Result;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
-import static _bayou._tmp._PublicSuffix.getPublicSuffix;
+import static _bayou._tmp._PublicSuffix.isPublicSuffix;
 
-// http://tools.ietf.org/html/rfc6265
 class InMemoryCookieStorage implements CookieStorage
 {
     // domain->cookies
@@ -108,7 +104,7 @@ class InMemoryCookieStorage implements CookieStorage
 
         // sameDomain
         //    true - request domain is the same as this domain
-        //   false - request domain is a parent of this domain
+        //   false - request domain is a child  of this domain
         void getCookies(long now, ArrayList<Cookie> results, boolean sameDomain, String reqPath, boolean reqSecure)
         {
             // do a quick copy
@@ -150,14 +146,6 @@ class InMemoryCookieStorage implements CookieStorage
 
     /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    // [public suffix]
-    // it's possible that a parent of a public suffix is not a public suffix,
-    // e.g. compute.amazonAws.com is a public suffix, but amazonAws.com is not.
-    // foo.compute.amazonAws.com cannot set a cookie for compute.amazonAws.com or higher domains.
-    // w1.amazonAws.com can set a cookie for amazonAws.com, which affects w2.amazonAws.com.
-    // however the cookie must not affect compute.amazonAws.com and its subdomains.
-
-
     @Override
     public Async<Void> setCookies(HttpRequest request, HttpResponse response)
     {
@@ -167,46 +155,20 @@ class InMemoryCookieStorage implements CookieStorage
         if(hp==null) return Async.VOID; // not likely
         String reqDomain = hp.hostString(); // could be IP literal
 
-        // lazy
-        String defaultPath=null;
-        int reqDomainPublicSuffix_length=-1;
-
         for(Cookie cookie : response.cookies())
         {
             String cookieDomain = cookie.domain();
-            // cookie.domain=null => the cookie is only sent back to the origin server, i.e. exact domain match
             if(cookieDomain!=null)
             {
-                // if cookie.domain is illegal,
-                // it can be malicious, or an innocent mistake by the server app.
-                // treat it as null domain. it's harmless to sent it back to the origin server.
-
-                if(!Cookie.domainMatches(reqDomain, cookieDomain))
-                {
-                    // (reqDomain can be IP literal here, to which domainMatches() always return false)
-                    cookie = new Cookie(cookie, cookieDomain=null, cookie.path());
-                }
-                else // cookieDomain is same as, or a parent of, reqDomain. (reqDomain won't be IP literal here)
-                {
-                    if(reqDomainPublicSuffix_length==-1)
-                        reqDomainPublicSuffix_length=getPublicSuffix(reqDomain, true).length();
-
-                    if(cookieDomain.length() <= reqDomainPublicSuffix_length)
-                    {
-                        cookie = new Cookie(cookie, cookieDomain=null, cookie.path());
-                    }
-                    // don't test whether cookie.domain is a public suffix.
-                    // it's possible that it is not, yet it's a parent of a public suffix. for example
-                    //     req.domain="foo.compute.amazonAws.com", cookie.domain="amazonAws.com"
-                    // this case is illegal because "compute.amazonAws.com" is a public suffix.
-                }
+                if(!Cookie.covers(cookieDomain, reqDomain))
+                    continue;   // ignore the cookie entirely.
             }
+            // cookie.domain=null => the cookie is only applicable to reqDomain
 
             if(cookie.path()==null) // set it to default path
             {
-                if(defaultPath==null)
-                    defaultPath=Cookie.defaultPath(request.uriPath());
-                cookie = new Cookie(cookie, cookieDomain, defaultPath);
+                String defaultPath=Cookie.defaultPath(request.uriPath());
+                cookie = new Cookie(cookie, defaultPath);
                 // defaultPath could contain ";" which is illegal in Set-Cookie header.
                 // but it's ok for client's purpose.
             }
@@ -242,18 +204,14 @@ class InMemoryCookieStorage implements CookieStorage
         if(hp.ip!=null) // request host is IP; exact domain match only.
             return Async.success(results);
 
-        // match parent domains below the public suffix.
-        int reqDomainPublicSuffix_length= getPublicSuffix(reqDomain, true).length();
-
+        // parent domains that cover reqDomain. see Cookie.covers()
         while(true)
         {
-            int iDot = reqDomain.indexOf('.');
-            if(iDot==-1)
+            reqDomain = _Dns.parent(reqDomain);
+            if(reqDomain==null)
                 break;
-            if(reqDomain.length()-iDot-1 <= reqDomainPublicSuffix_length )
+            if(isPublicSuffix(reqDomain))
                 break;
-
-            reqDomain = reqDomain.substring(iDot+1); // parent domain, below public suffix
 
             set = map.get(reqDomain);
             if(set!=null)

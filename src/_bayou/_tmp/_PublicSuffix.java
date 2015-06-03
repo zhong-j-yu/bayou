@@ -19,7 +19,7 @@ public class _PublicSuffix
     // <domain> is normal domain, containing no "*". it's lower case, A-Label or NR-LDH.
     // a domain can only be mapped to one type (or none)
 
-    enum Type { normal, star, exception }
+    enum Type { normal, exception, star }
     static final HashMap<String,Type> rules = new HashMap<>();  // domain->type
     static
     {
@@ -96,74 +96,27 @@ public class _PublicSuffix
     // ==========================================================================================================
 
     // the input is in canonical form - lower case, A-Label or NR-LDH.
-    public static String getPublicSuffix(String domain, boolean usePseudoTld)
+    public static boolean isPublicSuffix(String domain)
     {
-        String prev = domain;
-        String suffix = domain;
-        while(true)
+        Type type = rules.get(domain);
+        if(type==null)
         {
-            Type type = rules.get(suffix);
-            if(type==null) // try parent
-            {
-                prev = suffix;
-                suffix = parent(prev);
-                if(suffix!=null)
-                    continue;
-
-                // nothing matches. `prev` is the TLD.
-                // it is a "pseudo" TLD, for example: "test", "localhost", "made-up".
-                // real public TLDs are explicitly listed in rules as "normal" or "star"; won't reach here.
-                if(usePseudoTld)
-                {
-                    return prev;
-                    // return the pseudo TLD as the public suffix.
-                    // implications for cookies:  server "s1.localhost" cannot set cookie.domain="localhost".
-                    // this choice is consistent with
-                    //   #. browser behavior
-                    //   #. the algorithm on publicSuffix.org
-                    //   #. prev cookie RFC2965, which forbids TLD cookie domain
-                }
-                else
-                {
-                    // caller wants to distinguish real and pseudo TLDs. return null for pseudo.
-                    return null;
-                }
-
-
-            }
-
-            switch (type)
-            {
-                case normal:
-                {
-                    return suffix;
-                    // possible that suffix=domain, e.g. domain="com"
-                }
-                case star:
-                {
-                    return prev;
-                    // possible that prev=domain. e.g. domain="kobe.jp"
-                    // possible that prev=domain=TLD.
-                }
-                case exception:
-                {
-                    return parent(suffix);
-                    // return non-null, because [assumption] exception rule contains at least 2 labels
-                }
-                default: throw new AssertionError();
-            }
+            String parent = _Dns.parent(domain);
+            if(parent==null)    // domain is unknown TLD.
+                return true;    // treat all TLDs as public suffix, as far as cookie is concerned
+            return rules.get(parent)==Type.star;  // *.parent
         }
+        switch(type)
+        {
+            case normal :    return true;
+            case exception:  return false;
+
+            // rule [*.domain] - domain is not public suffix, unless it's TLD
+            case star: return domain.indexOf('.')==-1;
+
+            default: throw new AssertionError();
+        }
+
     }
-
-    static String parent(String domain)
-    {
-        int iDot = domain.indexOf('.');
-        if(iDot==-1) return null; // domain is top level
-        return domain.substring(iDot+1);
-    }
-
-
-
-
 
 }

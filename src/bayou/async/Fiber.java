@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * </pre>
  * <p>
  *     A fiber is <em>completed</em> when the task is completed.
- *     See {@link #isCompleted()}, {@link #join()}, and {@link #block()}.
+ *     See {@link #isCompleted()}, {@link #join()}.
  * </p>
  * <pre>
  *     fiber.block(); // block the current thread until the fiber is completed.
@@ -538,7 +538,8 @@ public class Fiber<T>
      * <p>
      *     Note: this method is an <em>async</em> analogue of `Thread.join()`;
      *     it <em>does not block</em> the current thread.
-     *     See {@link #block()} method instead.
+     *     You can do <code>join().sync()</code> instead,
+     *     see {@link bayou.async.Async#sync()}.
      * </p>
      */
     public Async<T> join()
@@ -568,29 +569,6 @@ public class Fiber<T>
         // so each join() call increase memory footage. usually join() is called only once.
         // but if app does `while(!fiber.join().isCompleted())` we are screwed. TBA.
         // use `fiber.isCompleted()` instead.
-    }
-
-    /**
-     * Block the current thread util this fiber completes. The return value is the result of the fiber task.
-     * <p>
-     *     If the current thread is interrupted while it's being blocked by this method,
-     *     the fiber task will receive a cancellation request with `InterruptedException` as reason.
-     *     Hopefully the fiber task will abort quickly, so that this method can return quickly.
-     * </p>
-     * <p>
-     *     This method does not have a timeout parameter;
-     *     you can impose a timeout on the fiber by `join().timeout(duration)` before calling `block()`.
-     * </p>
-     * <p>
-     *     <b>Caution:</b> This is a blocking method, which usually should not be called in an async application.
-     *     Because this method blocks the current thread, deadlock is possible if it's called in a fiber
-     *     executor, preventing this or other fibers to advance to completion.
-     *     Be very careful if you use this method on a production system.
-     * </p>
-     */
-    public Result<T> block()
-    {
-        return _Asyncs.await(this.join());
     }
 
     /**

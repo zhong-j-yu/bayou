@@ -11,6 +11,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
+import static _bayou._tmp._PublicSuffix.isPublicSuffix;
+
 /**
  * Http response cookie. Modeled on <a href="http://tools.ietf.org/html/rfc6265">RFC6265</a>.
  * <p>
@@ -231,16 +233,16 @@ public class Cookie
     }
 
 
-    Cookie(Cookie that, String new_domain, String new_path)
+    Cookie(Cookie that,  String new_path)
     {
         this.name = that.name;
         this.value = that.value;
         this.maxAge = that.maxAge;
+        this.domain = that.domain;
         this.secure = that.secure;
         this.httpOnly = that.httpOnly;
 
         // not checked!!
-        this.domain = new_domain;
         this.path = new_path;
     }
 
@@ -543,22 +545,44 @@ public class Cookie
 
 
 
-    // whether a request host matches a cookie domain. e.g. "x.y.com" domain-matches "y.com"
-    // http://tools.ietf.org/html/rfc6265#section-5.1.3
-    // remember to remove port from requestHost.
-    // cookieDomain must have been validated
-    // both args must be in lower case
-    static boolean domainMatches(String requestHost, String cookieDomain)
-    {
-        if(!requestHost.endsWith(cookieDomain))
-            return false;
-        int r = requestHost.length()-cookieDomain.length();
-        if(r>0 && requestHost.charAt(r-1)!='.')
-            return false;
-        // requestHost must not an IP address. it's must be true here since cookieDomain is a valid domain
-        return true;
-    }
+//    // whether a request host matches a cookie domain. e.g. "x.y.com" domain-matches "y.com"
+//    // http://tools.ietf.org/html/rfc6265#section-5.1.3
+//    // remember to remove port from requestHost.
+//    // cookieDomain must have been validated
+//    // both args must be in lower case
+//    static boolean domainMatches(String requestHost, String cookieDomain)
+//    {
+//        if(!requestHost.endsWith(cookieDomain))
+//            return false;
+//        int r = requestHost.length()-cookieDomain.length();
+//        if(r>0 && requestHost.charAt(r-1)!='.')
+//            return false;
+//        // requestHost must not an IP address. it's must be true here since cookieDomain is a valid domain
+//        return true;
+//    }
 
+
+    // both args must be in lower case
+    // cookieDomain must have been validated
+    // remember to remove port from requestHost.
+    // definitely false if requestHost is IP
+    static boolean covers(String cookieDomain, String requestHost)
+    {
+        //  A cookie domain's coverage is the set of domains that the cookie is applicable to. It is define as such:
+        //     - the coverage set contains the cookie domain.
+        //     - if the set contains x, and x is not a public suffix, the set contains all direct subdomains of x.
+        while(true)
+        {
+            if(requestHost.equals(cookieDomain))
+                return true;
+            requestHost = _Dns.parent(requestHost);
+            if(requestHost==null)
+                break;
+            if(isPublicSuffix(requestHost))
+                break;
+        }
+        return false;
+    }
 
 
 

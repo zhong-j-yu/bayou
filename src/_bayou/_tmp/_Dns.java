@@ -54,4 +54,10 @@ public class _Dns
         // todo: actual async dns impl
     }
 
+    public static String parent(String domain)
+    {
+        int iDot = domain.indexOf('.');
+        if(iDot==-1) return null; // domain is top level
+        return domain.substring(iDot+1);
+    }
 }

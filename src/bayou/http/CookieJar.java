@@ -244,8 +244,8 @@ public class CookieJar
             if(iColon!=-1)
                 requestHost = requestHost.substring(0, iColon);
 
-            if(!Cookie.domainMatches(requestHost, cookieDomain))
-                throw new IllegalArgumentException("requestHost does not match cookieDomain");
+            if(!Cookie.covers(cookieDomain, requestHost))
+                throw new IllegalArgumentException("cookieDomain does not cover requestHost");
         }
         this.cookieDomain = cookieDomain;
 
