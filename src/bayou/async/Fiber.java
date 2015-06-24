@@ -572,6 +572,29 @@ public class Fiber<T>
     }
 
     /**
+     * Block the current thread util this fiber completes. The return value is the result of the fiber task.
+     * <p>
+     *     If the current thread is interrupted while it's being blocked by this method,
+     *     the fiber task will receive a cancellation request with `InterruptedException` as reason.
+     *     Hopefully the fiber task will abort quickly, so that this method can return quickly.
+     * </p>
+     * <p>
+     *     This method does not have a timeout parameter;
+     *     try `join().timeout(duration).sync()` instead.
+     * </p>
+     * <p>
+     *     <b>Caution:</b> This is a blocking method, which usually should not be called in an async application.
+     *     Because this method blocks the current thread, deadlock is possible if it's called in a fiber
+     *     executor, preventing this or other fibers to advance to completion.
+     *     Be very careful if you use this method on a production system.
+     * </p>
+     */
+    public Result<T> block()
+    {
+        return _Asyncs.await(this.join());
+    }
+
+    /**
      * Start an async action that idles for the specified duration, then succeeds with `null`.
      * <p>
      *     If the action is canceled with `reason=e` before the duration has passed,
