@@ -4,6 +4,7 @@ import _bayou._tmp._KnownHeaders;
 import _bayou._str._StrCi;
 
 import java.util.*;
+import java.util.function.BiConsumer;
 
 /**
  * A Map implementation for MIME headers, with case-insensitive keys.
@@ -14,6 +15,12 @@ import java.util.*;
  * </p>
  * <p>
  *     The implementation of this class is optimized for well-known headers (see {@link Headers}).
+ * </p>
+ * <p>
+ *     For methods {@link #xGet xGet(key)}, {@link #xContainsKey xContainsKey(key)},
+ *     {@link #xPut xPut(key,value)}, {@link #xRemove xRemove(key)},
+ *     `key` must be a constant value defined in {@link bayou.mime.Headers}.
+ *     For example: `map.xGet(Headers.Host);`
  * </p>
  */
 public class HeaderMap implements Map<String,String>
@@ -66,6 +73,12 @@ public class HeaderMap implements Map<String,String>
     @Override public int size() { return k2v.size(); }
     @Override public boolean isEmpty() { return k2v.isEmpty(); }
     @Override public boolean containsValue(Object value) { return k2v.containsValue(value); }
+
+    @Override
+    public void forEach(BiConsumer<? super String, ? super String> action)
+    {
+        k2v.forEach(action);
+    }
 
     @Override public void clear()
     {
@@ -205,6 +218,46 @@ public class HeaderMap implements Map<String,String>
         }
 
         return k2v.put(keyNice, value);
+    }
+
+    /**
+     * @param key must be a constant value defined in {@link bayou.mime.Headers}
+     */
+    public String xGet(Object key)
+    {
+        return k2v.get(key);
+    }
+
+    /**
+     * @param key must be a constant value defined in {@link bayou.mime.Headers}
+     */
+    public boolean xContainsKey(Object key)
+    {
+        return k2v.get(key)!=null;
+    }
+
+    /**
+     * @param key must be a constant value defined in {@link bayou.mime.Headers}
+     */
+    public String xRemove(Object key)
+    {
+        notReadOnly();
+
+        return k2v.remove(key);
+    }
+
+
+    /**
+     * @param key must be a constant value defined in {@link bayou.mime.Headers}
+     */
+    public String xPut(String key, String value)
+    {
+        notReadOnly();
+
+        if(value==null)
+            throw new IllegalArgumentException("header value cannot be null");
+
+        return k2v.put(key, value);
     }
 
 }

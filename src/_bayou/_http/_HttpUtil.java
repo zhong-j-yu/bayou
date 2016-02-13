@@ -160,13 +160,13 @@ public class _HttpUtil
 
     public static void addVaryHeader(HeaderMap headers, String hv)
     {
-        String hVary = headers.get(Vary);  // assume it has been checked to be valid header value
+        String hVary = headers.xGet(Vary);  // assume it has been checked to be valid header value
         if(hVary==null || hVary.isEmpty())
-            headers.put(Vary, hv);
+            headers.xPut(Vary, hv);
         else if(hVary.equals("*"))
             ; // still *
         else
-            headers.put(Vary, hVary + ", " + hv);   // hVary was checked
+            headers.xPut(Vary, hVary + ", " + hv);   // hVary was checked
 
     }
 
@@ -178,13 +178,13 @@ public class _HttpUtil
 
         ContentType contentType = entity.contentType();
         if(contentType!=null)
-            headers.put(Content_Type, contentType.toString());  // content-type chars were checked
+            headers.xPut(Content_Type, contentType.toString());  // content-type chars were checked
 
         String contentEncoding = entity.contentEncoding();
         if(contentEncoding!=null)
         {
             checkHeaderValue(Content_Encoding, contentEncoding);
-            headers.put(Content_Encoding, contentEncoding);
+            headers.xPut(Content_Encoding, contentEncoding);
         }
 
         // contentLength is not an entity header
@@ -200,12 +200,12 @@ public class _HttpUtil
             String s = _StrUtil.doQuote(etag);
             if(entity.etagIsWeak())
                 s = "W/"+s;
-            headers.put(ETag, s);
+            headers.xPut(ETag, s);
         }
 
         Instant lastModified = entity.lastModified();
         if(lastModified!=null)
-            headers.put(Last_Modified, _HttpDate.toHttpDate(lastModified));
+            headers.xPut(Last_Modified, _HttpDate.toHttpDate(lastModified));
 
         Instant expires = entity.expires();
         if(expires!=null)
@@ -217,7 +217,7 @@ public class _HttpUtil
             // don't care if `Expires` is in the distant past, like year 0001.
             // worst case, client fails to parse or accept it.
 
-            headers.put(Expires, _HttpDate.toHttpDate(expires));
+            headers.xPut(Expires, _HttpDate.toHttpDate(expires));
         }
     }
 

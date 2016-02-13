@@ -234,15 +234,6 @@ public class HttpResponseImpl implements HttpResponse, AutoAsync<HttpResponse>
     }
 
 
-    // values for Set-Cookie headers.
-    List<String> headersSetCookie()
-    {
-        ArrayList<String> list = new ArrayList<>(cookies.size());
-        for(Cookie cookie : cookies)
-            list.add(cookie.toSetCookieString());
-        return list;
-    }
-
     /**
      * Set the entity.
      * @return this

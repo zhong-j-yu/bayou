@@ -1,10 +1,12 @@
 package bayou.http;
 
+import _bayou._tmp._ByteBufferPool;
 import _bayou._tmp._TrafficDumpWrapper;
 import _bayou._tmp._Util;
 import bayou.async.Async;
 import bayou.async.Fiber;
 import bayou.async.Promise;
+import bayou.mime.HeaderMap;
 import bayou.mime.Headers;
 import bayou.ssl.SslConnection;
 import bayou.tcp.TcpConnection;
@@ -13,11 +15,21 @@ import bayou.util.Result;
 import java.net.InetAddress;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 
 class ImplConn
 {
+    static final boolean FIBER = _Util.booleanProp(true, "bayou.http.server.fiber");
+    // by default, each connection is associated with a fiber, for features like CookieJar.
+    // can be disabled if app doesn't need fibers, to save a little CPU time.
+
+    static final boolean PREV_HEADERS = _Util.booleanProp(false, "bayou.http.server.prevHeaders");
+    // not too helpful to performance
+
     HttpServer server;
     HttpServerConf conf;
     TcpConnection tcpConn;
@@ -36,7 +48,10 @@ class ImplConn
         if(dump!=null)
             dump.print(connId(), " open [", tcpConn.getPeerIp().getHostAddress(), "] ==\r\n");
 
-        startFiber(); // do that in a named method, to have a better fiber trace.
+        if(FIBER)
+            startFiber(); // do that in a named method, to have a better fiber trace.
+        else
+            jump(Goto.reqNew);
     }
 
     void startFiber()
@@ -60,6 +75,7 @@ class ImplConn
     int reqId;
     ImplConnReq xReq;
     ImplHttpRequest request;
+    HeaderMap prevHeaders;  // for pipelined requests, cache prev header values.
     TcpConnection tunnelConn;
 
     HttpResponse response;
@@ -72,14 +88,14 @@ class ImplConn
 
         reqNew, reqNone, reqErr, reqBad, reqGood,
 
-        respStart, respEnd, awaitReq,
+        respStart, respWrite, respEnd, awaitReq,
         respPipeBody, respDrainMark, respFlushAll,  // xResp internal goto
 
     }
 
     void jump(Goto g)
     {
-        assert Fiber.current()!=null;
+        if(FIBER) assert Fiber.current()!=null;
 
         try
         {
@@ -92,7 +108,11 @@ class ImplConn
             // the problem must be logged and investigated.
             HttpServer.logUnexpected(t);
             close(null, "unexpected error: ", t);
+            return;
         }
+
+        if(PIPELINE && flush==1) // delayed flush
+            flush1();
     }
     Goto execOne(Goto g)
     {
@@ -105,6 +125,7 @@ class ImplConn
             case reqGood : return gotGoodRequest();
 
             case respStart : return startResponding();
+            case respWrite : return responseWrite();
             case respEnd   : return responseEnded();
             case awaitReq  : return awaitNewRequest();
             //
@@ -197,7 +218,7 @@ class ImplConn
             xResp.dumpResp();
         // we dump the whole response head here, but actual write may fail later
 
-        return xResp.startWrite();
+        return Goto.respWrite;
     }
 
     Goto gotGoodRequest()
@@ -210,16 +231,12 @@ class ImplConn
 
         xReq = null;
 
-        HttpRequest.setFiberLocal(request);
-        Fiber.current().setName(fiberName(request));
+        if(FIBER) HttpRequest.setFiberLocal(request);
+        if(FIBER) Fiber.current().setName(fiberName(request));
 
-        String hvUpgrade = request.headers().get(Headers.Upgrade);
-        if(hvUpgrade!=null) // should be rare
-        {
-            HttpUpgrader upgrader = server.findUpgrader(hvUpgrade);
-            if(upgrader!=null)
-                return tryUpgrade(upgrader);
-        }
+        HttpUpgrader upgrader = server.findUpgrader(request.headers);
+        if(upgrader!=null)
+            return tryUpgrade(upgrader);
 
         return handleRequest();
     }
@@ -267,7 +284,7 @@ class ImplConn
         if(response==null) // good, upgrader takes over the connection. I'm retired
         {
             request=null;
-            promise.succeed(null); // this fiber ends
+            if(FIBER) promise.succeed(null); // this fiber ends
             return Goto.NA;
         }
 
@@ -403,13 +420,13 @@ class ImplConn
             response = null;
             tunnelConn = null;
 
-            promise.succeed(null); // this fiber ends
+            if(FIBER) promise.succeed(null); // this fiber ends
             return Goto.NA;
         }
 
         try
         {
-            ArrayList<Cookie> jarCookies = (ArrayList<Cookie>)CookieJar.getAllChanges();
+            List<Cookie> jarCookies = FIBER? (ArrayList<Cookie>)CookieJar.getAllChanges() : Collections.emptyList();
             // leave fiber local cookie jars. may be needed by response body. clear them after response is written
 
             xResp = ImplRespMod.modApp(this, request, response, jarCookies);  // may throw. may be last response
@@ -426,14 +443,34 @@ class ImplConn
             xResp.dumpResp();
         // we dump the whole response head here, but actual write may fail later
 
-        return xResp.startWrite();
+        return Goto.respWrite;
+    }
+
+    Goto responseWrite()
+    {
+        if(!PIPELINE)
+            return xResp.startWrite();
+
+        switch(flush)
+        {
+            case 0 :
+                return xResp.startWrite();
+            case 1 :
+                flush=0;
+                return xResp.startWrite();
+            case 2 :
+                flush=3;
+                return Goto.NA;
+            default :
+                throw new AssertionError();
+        }
     }
 
     Goto responseEnded()  // fail or success
     {
-        CookieJar.clearAll();
-        Fiber.current().setName(fiberName(null));
-        HttpRequest.setFiberLocal(null);
+        if(FIBER) CookieJar.clearAll();
+        if(FIBER) Fiber.current().setName(fiberName(null));
+        if(FIBER) HttpRequest.setFiberLocal(null);
 
         if(xResp.bodyError!=null) // internal problem. should be interesting, needs to be investigated.
             HttpServer.logUnexpected(xResp.bodyError); // if it's not really interesting, disable logging for it
@@ -445,6 +482,7 @@ class ImplConn
         doAccessLog(); // regardless of error
         // it uses request and xResp
 
+        if(PREV_HEADERS) prevHeaders = request.headers;
         request = null;
         ImplConnResp xRespL = xResp;
         xResp = null;
@@ -476,6 +514,7 @@ class ImplConn
         Result<Void> awaitReadableResult = awaitReadable.pollResult();
         if(awaitReadableResult==null) // more common
         {
+            if(PREV_HEADERS) prevHeaders = null;
             awaitReadable.timeout(conf.keepAliveTimeout)
                 .onCompletion(cbNextRequestReadable);
             return Goto.NA;
@@ -486,10 +525,14 @@ class ImplConn
                 return onNextRequestReadable(awaitReadableResult);
 
             // likely due to a prev unread() because of request pipelining.
-            // to be fair to other connections, yield, do not goto reqNew directly.
+            // to be fair to other connections, yield, do not goto reqNew directly, unless PIPELINE=true.
             // note: even if sever is not accepting, the buffered data in tcpConn is still accepted here
-            Fiber.current().getExecutor().execute(() ->
-                jump(Goto.reqNew));
+
+            if(PIPELINE)
+                return Goto.reqNew;
+
+            Executor executor = FIBER ? Fiber.current().getExecutor() : tcpConn.getExecutor();
+            executor.execute(() -> jump(Goto.reqNew));
             return Goto.NA;
         }
     }
@@ -529,7 +572,7 @@ class ImplConn
             bodyWritten=0;
 
         HttpAccess entry = new HttpAccess(
-                request, xResp.response, bodyWritten,
+                request, xResp.asHttpResponse(), bodyWritten,
                 request.timeReceived, xResp.writeT0, System.currentTimeMillis(),
                 xResp.connError);
 
@@ -553,13 +596,18 @@ class ImplConn
             tunnelConn=null;
         }
 
+        if(PIPELINE) flush=0;
+
         Async<Void> closing = tcpConn.close(drainTimeout);
         tcpConn =null;
 
-        if(closing.isCompleted()) // not rare
-            promise.complete(closing.pollResult());
-        else
-            closing.onCompletion(promise::complete);
+        if(FIBER)
+        {
+            if(closing.isCompleted()) // not rare
+                promise.complete(closing.pollResult());
+            else
+                closing.onCompletion(promise::complete);
+        }
 
         return Goto.NA;
     }
@@ -601,4 +649,73 @@ class ImplConn
     {
         return "== response #"+ tcpConn.getId()+"-"+reqId+" ==\r\n";
     }
+
+
+    /////////////////////////////////////////////////////////////////////////////////////////////
+
+    static final boolean PIPELINE = _Util.booleanProp(false, "bayou.http.server.pipeline");
+    // if enabled, give preference to pipelined requests in a connection; multiple responses may be buffered.
+    //
+    // pipeline isn't common in browsers. most are half-duplex: drain the response before writing next request.
+    // this class was written with that in mind, because half-duplex is simpler to code.
+    // we patched this class with a little hack to batch-process pipelined requests.
+    // a better impl would be 2 concurrent flows, for inbound and outbound, like we do in HttpClient.
+    // and we should expose HttpServerConnection to app for low-level request/response handling. TBA.
+
+
+    byte flush; // [0] none [1] delayed  [2] awaitWritable  [3] new response
+
+    void flush1()
+    {
+        try
+        {
+            tcpConn.write();
+        }
+        catch (Exception e)
+        {
+            // something wrong with the connection. we don't need to handle it here.
+            // the problem will manifest itself again, e.g. awaitReadable() should fail.
+            HttpServer.logErrorOrDebug(e);
+            flush=0;
+            return;
+        }
+
+        if(tcpConn.getWriteQueueSize()==0)
+        {
+            flush=0;
+            return;
+        }
+
+        // not all data are flushed. await writable and try again.
+        flush=2;
+        tcpConn.awaitWritable().timeout(conf.writeTimeout)
+            .onCompletion(this::flush2);
+        // here we have 2 concurrent flows - main-flow and flush-flow.
+        // they are on the same thread; no lock is needed.
+        // but they can't both do write, especially, no concurrent awaitWritable(). flush-flow controls writes.
+        // main-flow may alter the state before flush-flow wakes up from awaitWritable()
+        //   -> 3  a new response is added
+        //   -> 0  close called
+
+    }
+
+    void flush2(Result<Void> result)
+    {
+        if(flush==0)
+            return;
+
+        if(flush==3)
+        {
+            flush=0;
+            jump(Goto.respWrite);  // becomes main-flow
+            return;
+        }
+
+        flush1();
+    }
+
+
+
+
+
 }

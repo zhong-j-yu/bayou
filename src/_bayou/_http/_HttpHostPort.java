@@ -101,4 +101,48 @@ public class _HttpHostPort
 
         return hp;
     }
+
+    // if true, already normalized.
+    // may return false negative.
+    public static boolean isNormal(String string, boolean https)
+    {
+        if(string==null || string.isEmpty()) return false;
+        if(string.charAt(0)=='[') return false;  // ipv6, later
+
+        int X = string.lastIndexOf(':');
+        if(X==-1)
+            X = string.length();
+        else
+        {
+            if(X==string.length()-1)    return false;   // "host:"
+            if(string.charAt(X+1)=='0') return false;   // "host:0808", "host:0"
+            int port=0;
+            for(int i=X+1; i<string.length(); i++)
+            {
+                int c = string.charAt(i);
+                if(c<'0' || '9'<c) return false;
+                port = 10*port + (c-'0');
+                if(port>0xFFFF) return false;
+            }
+            if(port==(https?443:80)) return false; // implicit port; should be removed
+        }
+
+        return isNormalDomain(string, X) || _Ip.isIpv4(string, 0, X);
+
+    }
+
+    private static boolean isNormalDomain(String string, int X)
+    {
+        // domain
+        if(!_Dns.isValidDomain(string, 0, X)) return false;
+        // all lower case. no A-Z
+        for(int i=0; i<X; i++)
+        {
+            int c = string.charAt(i);
+            if('A'<=c && c<='Z') return false;
+        }
+        return true;
+
+
+    }
 }

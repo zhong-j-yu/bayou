@@ -3,6 +3,8 @@ package bayou.http;
 import _bayou._log._Logger;
 import _bayou._tmp._Util;
 import bayou.async.Async;
+import bayou.mime.HeaderMap;
+import bayou.mime.Headers;
 import bayou.ssl.SslChannel2Connection;
 import bayou.tcp.TcpChannel;
 import bayou.tcp.TcpChannel2Connection;
@@ -14,9 +16,7 @@ import java.net.InetSocketAddress;
 import java.nio.channels.ServerSocketChannel;
 import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
-import java.util.function.Supplier;
 
 /**
  * Http server.
@@ -146,8 +146,15 @@ public class HttpServer
         protocol = protocol.toLowerCase();
         upgraderMap.put(protocol, upgrader);
     }
-    HttpUpgrader findUpgrader(String hvUpgrade)
+    HttpUpgrader findUpgrader(HeaderMap requestHeaders)
     {
+        if(upgraderMap.isEmpty())
+            return null;
+
+        String hvUpgrade = requestHeaders.xGet(Headers.Upgrade);
+        if(hvUpgrade==null)
+            return null;
+
         hvUpgrade = hvUpgrade.toLowerCase();
         if(hvUpgrade.indexOf(',')==-1) // usually
             return upgraderMap.get(hvUpgrade);

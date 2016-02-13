@@ -55,6 +55,9 @@ public class _ByteBufferPool
     static final long defaultExpiration = Long.getLong(_ByteBufferPool.class.getName()+
             ".defaultExpiration", 60_000L).longValue();
 
+    static final boolean defaultDoLocalCache = _Util.booleanProp(true,
+        _ByteBufferPool.class.getName()+".defaultDoLocalCache");
+
     final Object lock(){ return this; }
     // when `this` becomes garbage, localCache becomes garbage, and all of
     // its local entries on all threads become garbage too.
@@ -77,7 +80,7 @@ public class _ByteBufferPool
     }
     public _ByteBufferPool(int bufferCapacity)
     {
-        this(bufferCapacity, true, defaultExpiration, false);
+        this(bufferCapacity, true, defaultExpiration, defaultDoLocalCache);
     }
 
     // todo: use weak ref for _ByteBufferPool, so that they can be GC-ed.

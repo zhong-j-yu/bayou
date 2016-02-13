@@ -29,6 +29,8 @@ import java.util.*;
 // initially defined in rfc2045. rfc2616 also defines it in http context. we follow rfc2616 here.
 public class ContentType
 {
+    /** ContentType of <code>"text/plain"</code>. */
+    static public final ContentType text_plain          = new ContentType("text","plain");
     /** ContentType of <code>"text/plain;charset=US-ASCII"</code>. */
     static public final ContentType text_plain_US_ASCII = new ContentType("text","plain","charset","US-ASCII");
     /** ContentType of <code>"text/plain;charset=ISO-8859-1"</code>. */
@@ -39,6 +41,11 @@ public class ContentType
     static public final ContentType text_html_UTF_8    = new ContentType("text","html","charset","UTF-8");
     /** ContentType of <code>""application/octet-stream""</code>. */
     static public final ContentType application_octet_stream  = new ContentType("application","octet-stream");
+
+    /** ContentType of <code>"application/json"</code>. */
+    static public final ContentType json          = new ContentType("application","json");
+    /** ContentType of <code>"application/json;charset=UTF-8"</code>. */
+    static public final ContentType json_UTF_8    = new ContentType("application","json","charset","UTF-8");
 
 
     final String type;     // lower case

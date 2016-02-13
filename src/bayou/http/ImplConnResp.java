@@ -1,6 +1,7 @@
 package bayou.http;
 
 import _bayou._str._CharSeqSaver;
+import _bayou._str._StringSaver;
 import _bayou._tmp._Util;
 import bayou.async.Async;
 import bayou.bytes.ByteSource;
@@ -24,9 +25,27 @@ class ImplConnResp
 {
     ImplConn hConn;
     TcpConnection tcpConn;
-    HttpResponseImpl response;
+
+
+    String httpVersion;
+    HttpStatus status;
+    HeaderMap headers;
+    List<Cookie> cookies;
+    HttpEntity entity;
+
+    HttpResponse asHttpResponse()  // used by access log API
+    {
+        return new HttpResponse()
+        {
+            @Override public String httpVersion() { return httpVersion; }
+            @Override public HttpStatus status() { return status; }
+            @Override public Map<String, String> headers() { return headers; }
+            @Override public List<Cookie> cookies() { return cookies; }
+            @Override public HttpEntity entity() { return entity; }
+        };
+    }
+
     boolean isLast;
-    int req_httpMinorVersion;   // 0 or 1. -1 if request parse error
 
     long highMark;
     long minThroughput; // >=0
@@ -40,14 +59,12 @@ class ImplConnResp
 
     long writeT0;
 
-    ImplConnResp(ImplConn hConn, HttpResponseImpl response, boolean isLast,
-                 int req_httpMinorVersion, ByteSource body, long bodyLength)
+    ImplConnResp init(ImplConn hConn, boolean isLast,
+                 ByteSource body, long bodyLength)
     {
         this.hConn = hConn;
         tcpConn = hConn.tcpConn;
-        this.response = response;
         this.isLast = isLast;
-        this.req_httpMinorVersion = req_httpMinorVersion;
 
         highMark = hConn.conf.outboundBufferSize;
         minThroughput = hConn.conf.writeMinThroughput;
@@ -55,6 +72,7 @@ class ImplConnResp
 
         this.body = body;
         this.bodyLength = bodyLength;
+        return this;
     }
 
     Goto startWrite()
@@ -62,7 +80,7 @@ class ImplConnResp
         writeT0 = System.currentTimeMillis();
 
         long r0 = tcpConn.getWriteQueueSize(); // should be 0
-        queueHead(response.status, response.headers, response.headersSetCookie());
+        queueHead();
         headLength = tcpConn.getWriteQueueSize() - r0;
 
         // head is not written yet; will do it together with body,
@@ -72,14 +90,14 @@ class ImplConnResp
         return pipeBody();
     }
 
-    void printHead(_CharSeqSaver out, HttpStatus status, HeaderMap headers, List<String> headersSetCookie)
+    void printHead(_StringSaver out)
     {
-        String ver = response.httpVersion();
-        if(req_httpMinorVersion==0) ver = "1.0";
-        // not sure how the 1.0 client reacts to a higher version response; send the same version instead.
-
-        out.append("HTTP/").append(ver).append(" ")
-            .append(status.toString()).append("\r\n");  // status chars were checked
+        //noinspection StringEquality
+        if(httpVersion=="1.1" && status==HttpStatus.c200_OK)  // most likely
+            out.append("HTTP/1.1 200 OK\r\n");
+        else
+            out.append("HTTP/").append(httpVersion).append(" ")
+                .append(status.toString()).append("\r\n");  // status chars were checked
 
         for(Map.Entry<String,String> nv : headers.entrySet())
         {
@@ -88,25 +106,27 @@ class ImplConnResp
             // name value have been sanity checked. we'll not generate syntactically incorrect header.
             out.append(name).append(": ").append(value).append("\r\n");
         }
-        for(String setCookie : headersSetCookie)   // setCookie guaranteed to be valid
-            out.append(Headers.Set_Cookie).append(": ").append(setCookie).append("\r\n");
+
+        if(!cookies.isEmpty())
+            for(Cookie cookie : cookies)   // toSetCookieString() guaranteed to be valid
+                out.append(Headers.Set_Cookie).append(": ").append(cookie.toSetCookieString()).append("\r\n");
 
         out.append("\r\n");
     }
 
-    void queueHead(HttpStatus status, HeaderMap headers, List<String> headersSetCookie)
+    void queueHead()
     {
-        _CharSeqSaver chars = new _CharSeqSaver( 6 + 4*headers.size() + 4*headersSetCookie.size() );
-        printHead(chars, status, headers, headersSetCookie);
+        _StringSaver chars = new _StringSaver( 64 );
+        printHead(chars);
         tcpConn.queueWrite(ByteBuffer.wrap(chars.toLatin1Bytes()));
     }
 
     void dumpResp()
     {
-        _CharSeqSaver chars = new _CharSeqSaver( 32 );
+        _StringSaver chars = new _StringSaver( 64 );
         chars.append(hConn.respId());
-        printHead(chars, response.status, response.headers, response.headersSetCookie());
-        hConn.dump.print(chars);
+        printHead(chars);
+        hConn.dump.print(chars.toList());
     }
 
     // we don't have a fast path for bodyLength==0; it should be rare anyway.
@@ -313,6 +333,13 @@ class ImplConnResp
         {
             tcpConn.queueWrite(SslConnection.SSL_CLOSE_NOTIFY);
             tcpConn.queueWrite(TcpConnection.TCP_FIN);
+        }
+
+        if(ImplConn.PIPELINE) // delay actual flush
+        {
+            writtenTotal+=tcpConn.getWriteQueueSize();
+            hConn.flush=1;
+            return Goto.respEnd;
         }
 
         return Goto.respFlushAll;

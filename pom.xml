@@ -11,7 +11,7 @@
 
     <groupId>com.github.zhong-j-yu</groupId>
     <artifactId>bayou</artifactId>
-    <version>0.9.9</version>
+    <version>1.0.0</version>
 
 
     <build>

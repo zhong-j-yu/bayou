@@ -62,6 +62,20 @@ public class _Ip
         return bytes;
     }
 
+    public static boolean isIpv4(CharSequence chars, int start, int end)
+    {
+        try
+        {
+            int n = v4Parse(chars, start, end, null, 0); // throws
+            if(n!=4) throw parseError;
+            return true;
+        }
+        catch (Exception e)
+        {
+            return false;
+        }
+    }
+
     public static byte[] parseIpv6(CharSequence chars, int start, int end)
     {
         try
@@ -193,8 +207,12 @@ public class _Ip
             if(nDigit==0) throw parseError;
             if(value>255) throw parseError;
 
-            if(n+1>bytes.length) throw parseError;
-            bytes[n++] = (byte)value;
+            if(bytes!=null)
+            {
+                if(n+1>bytes.length) throw parseError;
+                bytes[n] = (byte)value;
+            }
+            n++;
 
             if(start==end)
                 return n;

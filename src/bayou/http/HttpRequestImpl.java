@@ -55,7 +55,7 @@ public class HttpRequestImpl implements HttpRequest
     {
         this.method = method;
 
-        headers.put(Headers.Host, "unknown-host");
+        headers.xPut(Headers.Host, "unknown-host");
         // there must be a Host header. app can call host(string) after constructor.
 
         this.uri(uri);  // may override Host header
@@ -236,7 +236,7 @@ public class HttpRequestImpl implements HttpRequest
     {
         // we want this request to be thread-safe if used in read-only fashion (post construction+modifications)
         CookieCache cache = cookieCache;
-        String hCookie = headers.get(Headers.Cookie);
+        String hCookie = headers.xGet(Headers.Cookie);
         if(cache==null || !cache.consistent(hCookie))
         {
             Map<String,String> map = Cookie.parseCookieHeader(hCookie); // no throw. ok if hCookie==null
@@ -367,7 +367,7 @@ public class HttpRequestImpl implements HttpRequest
             uri = hp.toString(-1); // reconstructed, normalized
 
             this.uri = uri;
-            headers.put(Headers.Host, uri);
+            headers.xPut(Headers.Host, uri);
         }
         else // not CONNECT
         {
@@ -382,7 +382,7 @@ public class HttpRequestImpl implements HttpRequest
                 int implicitPort = rt.isHttps ? 443 : 80;
                 String host = hp.toString(implicitPort);
 
-                headers.put(Headers.Host, host);
+                headers.xPut(Headers.Host, host);
             }
             this.isHttps = rt.isHttps;
             this.uri = rt.reqUri;
@@ -432,12 +432,12 @@ public class HttpRequestImpl implements HttpRequest
     {
         // to avoid any inconsistency, the only storage of cookies is in headers["Cookie"]
         // performance isn't ideal. but not a big deal
-        String hCookie = headers.get(Headers.Cookie);
+        String hCookie = headers.xGet(Headers.Cookie);
         hCookie = Cookie.modCookieHeader(hCookie, name, value); // will sanity check name/value
         if(hCookie==null)
-            headers.remove(Headers.Cookie);
+            headers.xRemove(Headers.Cookie);
         else
-            headers.put(Headers.Cookie, hCookie); // no need to check hCookie, it's good
+            headers.xPut(Headers.Cookie, hCookie); // no need to check hCookie, it's good
 
         return this;
     }
@@ -459,9 +459,9 @@ public class HttpRequestImpl implements HttpRequest
     {
         String hCookie = Cookie.makeCookieHeader(cookies); // will sanity check name/value
         if(hCookie==null)
-            headers.remove(Headers.Cookie);
+            headers.xRemove(Headers.Cookie);
         else
-            headers.put(Headers.Cookie, hCookie); // no need to check hCookie, it's good
+            headers.xPut(Headers.Cookie, hCookie); // no need to check hCookie, it's good
 
         return this;
     }

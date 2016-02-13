@@ -1,5 +1,6 @@
 package bayou.http;
 
+import _bayou._http._HttpUtil;
 import _bayou._tmp._Array2ReadOnlyList;
 import _bayou._http._HttpHostPort;
 import _bayou._tmp._JobTimeout;
@@ -70,6 +71,7 @@ class ImplConnReq
 
     void awaitReadable() // not commonly called
     {
+        if(ImplConn.PREV_HEADERS) hConn.prevHeaders = null;
         Async<Void> awaitReadable = hConn.tcpConn.awaitReadable(/*accepting*/true);
         if(timeout==null)
             timeout = new _JobTimeout(hConn.conf.requestHeadTimeout, "HttpServerConf.requestHeadTimeout");
@@ -117,13 +119,11 @@ class ImplConnReq
 
         if(request==null) // beginning bytes
         {
-            int fieldMax = hConn.conf.requestHeadFieldMaxLength;
-            int totalMax = hConn.conf.requestHeadTotalMaxLength;
             request = new ImplHttpRequest();
             request.ip = hConn.tcpConn.getPeerIp();
             request.isHttps = hConn.tcpConn instanceof SslConnection;
             request.certs = certs();
-            parser = new ImplReqHeadParser(fieldMax, totalMax, hConn.conf.supportedMethods, request);
+            parser = new ImplReqHeadParser(request);
 
             if(hConn.dump!=null)
             {
@@ -133,7 +133,7 @@ class ImplConnReq
         }
 
         int bb_pos0 = bb.position();
-        parser.parse(bb);
+        parser.parse(bb, hConn.conf, hConn.prevHeaders);
 
         if(toDump!=null)
         {
@@ -146,23 +146,25 @@ class ImplConnReq
         if(bb.hasRemaining())
             hConn.tcpConn.unread(bb);
 
-        switch(parser.state)
+        if(parser.state == ImplReqHeadParser.State.DONE)
         {
-            case END: // done. in most cases, head is contained in one packet, and parsed in one round.
+            if(parser.errorResponse==null)
+            { // done. in most cases, head is contained in one packet, and parsed in one round.
                 request.timeReceived = System.currentTimeMillis();
                 return parse2();
-
-            case ERROR: // syntax error; we'll try to write a response to client.
+            }
+            else // syntax error; we'll try to write a response to client.
+            {
                 HttpResponseImpl errorResponse = parser.errorResponse;  // not null
                 return reqBad(errorResponse);
-
-            // otherwise needs more bytes to complete the head. this is rare.
-            default:
-                // we can imm try read() again, but that's unlikely to succeed, a wasteful sys call.
-                // more likely there is nothing to read yet, so we better await readable.
-                awaitReadable();
-                return Goto.NA;
+            }
         }
+
+        // otherwise needs more bytes to complete the head. this is rare.
+        // we can imm try read() again, but that's unlikely to succeed, a wasteful sys call.
+        // more likely there is nothing to read yet, so we better await readable.
+        awaitReadable();
+        return Goto.NA;
     }
 
     // head is syntactically correct. may still be "bad" request
@@ -184,13 +186,18 @@ class ImplConnReq
                 return reqBad(HttpStatus.c400_Bad_Request, "Missing port in Host: "+target);
             target = hp.toString(-1); // reconstructed, normalized
             request.uri = target;
-            headers.put(Headers.Host, target);
+            headers.xPut(Headers.Host, target);
             // HTTP/1.1 client should send Host header identical to request-target for CONNECT.
             // here we simply add/override Host with request-target.
         }
         else // not CONNECT
+        CHECK_REQ_TARGET:
         {
-            hv = headers.get(Headers.Host); // may be null or empty
+            hv = headers.xGet(Headers.Host); // may be null or empty
+
+            if( _HttpUtil.isOriginFormUri(request.uri) && _HttpHostPort.isNormal(hv, request.isHttps) )
+                break CHECK_REQ_TARGET; // all good, nothing to change. common case.
+
             RequestTarget rt = RequestTarget.of(request.isHttps, request.method, request.uri, hv);
             if(rt==null)
                 return reqBad(HttpStatus.c400_Bad_Request, "Invalid request-target: "+request.uri);
@@ -213,13 +220,13 @@ class ImplConnReq
                 return reqBad(HttpStatus.c400_Bad_Request, "Invalid Host: "+rt.host);
             int implicitPort = request.isHttps ? 443 : 80;
             String host = hp.toString(implicitPort); // reconstructed, normalized.
-            headers.put(Headers.Host, host);
+            headers.xPut(Headers.Host, host);
             // original Host header may be overridden if request-target is an absolute URI.
         }
 
 
         ContentType contentType=null;
-        if(null!=(hv=headers.get(Headers.Content_Type)))
+        if(null!=(hv=headers.xGet(Headers.Content_Type)))
         {
             try
             {
@@ -236,7 +243,7 @@ class ImplConnReq
         //   in practice, some clients set Content-Length in CONNECT requests; the most probable intention is
         //     to workaround some intermediaries; the apparent request body is actually payload for tunneling.
         //   we pass it as a request entity to app. if app doesn't read it, the request body will be tunneled.
-        if(null!=(hv=headers.get(Headers.Transfer_Encoding)))
+        if(null!=(hv=headers.xGet(Headers.Transfer_Encoding)))
         {
             if(!_StrUtil.equalIgnoreCase(hv, "chunked"))
                 return reqBad(HttpStatus.c501_Not_Implemented,
@@ -245,12 +252,12 @@ class ImplConnReq
 
             //we have a chunked entity body
             //if Content-Length is present along with Transfer-Encoding, Content-Length is ignored (must be removed)
-            headers.remove(Headers.Content_Length);
+            headers.xRemove(Headers.Content_Length);
 
             request.entity = reqEntity = new ImplHttpEntity(hConn, /*bodyLength*/null);
             // the size limit of the body will be checked when reading the body
         }
-        else if(null!=(hv=headers.get(Headers.Content_Length)))
+        else if(null!=(hv=headers.xGet(Headers.Content_Length)))
         {
             long len;
             try
@@ -297,7 +304,7 @@ class ImplConnReq
         {
             reqEntity.contentType = contentType; // can be null
 
-            if(null!=(hv=headers.get(Headers.Content_Encoding)))
+            if(null!=(hv=headers.xGet(Headers.Content_Encoding)))
             {
                 if(hConn.conf._requestEncodingReject)
                     return reqBad(HttpStatus.c415_Unsupported_Media_Type, "Unsupported Content-Encoding: " + hv);
@@ -308,7 +315,7 @@ class ImplConnReq
             // if they exist, they'll be in the request headers, but not entity properties.
         }
 
-        if(null!=(hv=headers.get(Headers.Expect)))
+        if(null!=(hv=headers.xGet(Headers.Expect)))
         {
             if( _StrUtil.equalIgnoreCase(hv, "100-continue") )
             {

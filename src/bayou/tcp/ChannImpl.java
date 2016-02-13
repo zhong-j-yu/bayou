@@ -86,7 +86,10 @@ class ChannImpl implements TcpChannel, SelectorThread.OnSelected
     @Override public Async<Void> awaitReadable(boolean accepting)
     {
         Promise<Void> promise = new Promise<>();
-        selectorThread.execute( ()->onAwaitReadable(accepting, promise) );
+        if(selectorThread==Thread.currentThread())
+            onAwaitReadable(accepting, promise);
+        else
+            selectorThread.execute( ()->onAwaitReadable(accepting, promise) );
         return promise;
     }
 
@@ -103,7 +106,10 @@ class ChannImpl implements TcpChannel, SelectorThread.OnSelected
     @Override public Async<Void> awaitWritable()
     {
         Promise<Void> promise = new Promise<>();
-        selectorThread.execute( ()->onAwaitWritable(promise) );
+        if(selectorThread==Thread.currentThread())
+            onAwaitWritable(promise);
+        else
+            selectorThread.execute( ()->onAwaitWritable(promise) );
         return promise;
     }
 
@@ -153,14 +159,13 @@ class ChannImpl implements TcpChannel, SelectorThread.OnSelected
     @Override
     public void onSelected(SelectionKey sk)
     {
-        if(sk.isReadable())
-        {
+        int readyOps = sk.readyOps();
+
+        if( (readyOps & SelectionKey.OP_READ) != 0)
             onReadable(null);
-        }
-        if(sk.isWritable())
-        {
+
+        if( (readyOps & SelectionKey.OP_WRITE) != 0)
             onWritable(null);
-        }
     }
 
 

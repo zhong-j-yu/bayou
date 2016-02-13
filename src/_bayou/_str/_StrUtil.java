@@ -86,6 +86,9 @@ public class _StrUtil
 
     public static boolean equalIgnoreCase(CharSequence charsA, CharSequence charsB)
     {
+        if(charsA==charsB)
+            return true;
+
         int N = charsA.length();
         if(N!=charsB.length())
             return false;

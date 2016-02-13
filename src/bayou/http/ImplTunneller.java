@@ -163,21 +163,21 @@ class ImplTunneller
         }
 
         // no response body for CONNECT. ignore appResponse.entity().
-        headers.remove(Headers.Content_Length);  // in case app set it
-        headers.remove(Headers.Transfer_Encoding);   // in case app set it
+        headers.xRemove(Headers.Content_Length);  // in case app set it
+        headers.xRemove(Headers.Transfer_Encoding);   // in case app set it
 
         // Connection header?
 
         // other headers
-        if(!headers.containsKey(Headers.Date))
-            headers.put(Headers.Date, _HttpDate.getCurrStr());
+        if(!headers.xContainsKey(Headers.Date))
+            headers.xPut(Headers.Date, _HttpDate.getCurrStr());
 
-        String hServer = headers.get(Headers.Server);
+        String hServer = headers.xGet(Headers.Server);
         if(hServer==null || hServer.isEmpty())
             hServer = "Bayou";
         else
             hServer = "Bayou " + hServer;  // hServer was checked, is still valid
-        headers.put(Headers.Server, hServer);
+        headers.xPut(Headers.Server, hServer);
 
         _CharSeqSaver out = new _CharSeqSaver( 4 + 4*headers.size() + 4*cookies.size() );
         {

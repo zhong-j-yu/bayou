@@ -2,7 +2,7 @@ package bayou.http;
 
 import _bayou._tmp._Tcp;
 import _bayou._tmp._TrafficDumpWrapper;
-import _bayou._str._ChArr;
+import _bayou._str._ByteArr;
 import _bayou._tmp._Util;
 import bayou.bytes.RangedByteSource;
 import bayou.ssl.SslConf;
@@ -505,7 +505,8 @@ public final class HttpServerConf
 
     // conf HttpServer ............................................................................
 
-    HashMap<_ChArr, String> supportedMethods;
+    boolean supportGET;
+    HashMap<_ByteArr, String> supportedMethods;
     { // default
         supportedMethods("GET", "HEAD", "POST", "PUT", "DELETE");
     }
@@ -532,13 +533,14 @@ public final class HttpServerConf
 
         require(methods.length > 0, "methods.length>0");
 
-        HashMap<_ChArr, String> map = new HashMap<>();
+        HashMap<_ByteArr, String> map = new HashMap<>();
         for(String method : methods)
         {
-            _ChArr str = new _ChArr(method.toCharArray(), method.length());
+            _ByteArr str = _ByteArr.of(method);
             map.put(str, method.intern());  // most likely already intern-ed.
         }
         supportedMethods = map;
+        supportGET = map.containsValue("GET");
 
         return this;
     }

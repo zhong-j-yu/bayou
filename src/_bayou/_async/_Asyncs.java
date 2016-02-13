@@ -180,10 +180,11 @@ public class _Asyncs
         }.await();
     }
 
-    static class ConsumerInExecutor<T> implements Consumer<T>
+    static class ConsumerInExecutor<T> implements Consumer<T>, Runnable
     {
         Executor executor;
         Consumer<T> consumer;
+        T result;
 
         ConsumerInExecutor(Executor executor, Consumer<T> consumer)
         {
@@ -194,7 +195,16 @@ public class _Asyncs
         @Override
         public void accept(T result)
         {
-            executor.execute( ()->consumer.accept(result) );
+            assert this.result==null; // this consumer is invoked only once.
+
+            this.result = result;
+            executor.execute(this);
+        }
+
+        @Override
+        public void run()
+        {
+            consumer.accept(result);
         }
     }
 }

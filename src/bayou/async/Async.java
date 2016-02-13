@@ -223,9 +223,8 @@ public interface Async<T>
      * Fail this action with {@link java.util.concurrent.TimeoutException TimeoutException}
      * if it's not completed within the specific duration.
      * <p>
-     *     The default implementation sends a cancellation request with {@code TimeoutException}
-     *     to this action after the specified duration.
-     *     It only works if this action responds to the cancellation request.
+     *     The default implementation calls {@link #cancel(Exception) cancel(TimeoutException)}
+     *     after `duration`, unless this action is completed before that.
      * </p>
      * <p>
      *     Example usage:
@@ -241,17 +240,21 @@ public interface Async<T>
      * <p>
      *     This method returns `this`, or an equivalent Async (that behaves the same as this one).
      * </p>
+     * <p>
+     *     The timeout is relative to when `timeout()` is called, not when the action is started.
+     * </p>
      *
      * @return `this` or an equivalent {@code Async<T>}, for method chaining.
      */
     public default Async<T> timeout(Duration duration)
     {
-        if(isCompleted())
-            return this;
-
-        return new AsyncTimeout<>(this, duration);
+        if(!isCompleted())
+            new AsyncTimeout<>(this, duration, null);
+        return this;
     }
-    // the timeout is relative to the time timeout() is called, not the time the action is started
+    // TBA: timeout(duration, ()->Exception)
+    // for now, users may do: timeout(duration).catch_(TimeoutException...)
+    // internally, we may call  new AsyncTimeout<>(async, duration, exSupplier);
 
 
     /**

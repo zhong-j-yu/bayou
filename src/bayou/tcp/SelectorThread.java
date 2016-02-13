@@ -233,7 +233,7 @@ class SelectorThread extends Thread implements Executor, _WithThreadLocalFiber, 
         // local event loop may be dominated by some channels (by successively adding new events)
         // so that we don't have a chance to check channel events, or update channel interests.
         // so we'll run loop only for a finite time, then exit to take care of the two concerns.
-        long loopEndTime = System.currentTimeMillis() + 2;
+        long loopEndTime = System.currentTimeMillis() + 100;  // need to be sufficiently long
         // apparently the precision of currentTimeMillis() is 1 on modern computers
         // we don't use nanoTime(), which could be slow (700ns on Win7?)
 
@@ -291,10 +291,10 @@ class SelectorThread extends Thread implements Executor, _WithThreadLocalFiber, 
                 // one chann flow may be corrupted; but keep the selector going
             }
 
-            if( ( ++iLoop & ((1<<8)-1) ) !=0 )  // loop at least 2^8 times before checking time
+            if( ( ++iLoop & ((1<<10)-1) ) !=0 )  // loop at least 2^10 times before checking time
                 continue;
 
-            if(System.currentTimeMillis()>loopEndTime) // usually 1ms<time_passed<2ms
+            if(System.currentTimeMillis()>loopEndTime)
             {
                 // blockingOnSelect==false, we'll do a selectNow() to peek channel events
                 break;

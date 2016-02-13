@@ -29,7 +29,7 @@ public class _TrafficDumpWrapper
         print(new _Array2ReadOnlyList<>(chars));
     }
 
-    public void print(List<CharSequence> chars)
+    public void print(List<? extends CharSequence> chars)
     {
         Runnable task = () ->
         {

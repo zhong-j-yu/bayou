@@ -34,4 +34,7 @@ public interface Headers
             Content_Disposition="Content-Disposition",
             Origin="Origin";
 
+    public static final String
+            X_Forwarded_For = "X-Forwarded-For", X_Forwarded_Proto = "X-Forwarded-Proto";
+
 }

@@ -15,9 +15,7 @@ import bayou.mime.HeaderMap;
 
 import java.nio.ByteBuffer;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.Map;
+import java.util.*;
 
 import static bayou.http.HttpStatus.*;
 import static bayou.mime.Headers.*;
@@ -30,18 +28,36 @@ class ImplRespMod
     // should not throw - no user code is involved
     static ImplConnResp modErr(ImplConn hConn, ImplHttpRequest request, HttpResponseImpl response)
     {
-        // we can freely modify the response
-        HttpStatus status = response.status();
+        // 0 or 1. could be even -1 if request parse error.
+        byte req_httpMinorVersion= request==null? -1 : request.httpMinorVersion;
 
-        HeaderMap headers = response.headers;
+        ImplConnResp xResp = new ImplConnResp();
+
+        xResp.httpVersion = response.httpVersion(); // 1.1
+        if(req_httpMinorVersion<1)
+            xResp.httpVersion = "1.0";
+        // not sure how the 1.0 client reacts to a higher version response; send the same version instead.
+
+        xResp.status = response.status();
+
+        // we can freely modify the response headers
+        xResp.headers = response.headers;
+
+        xResp.cookies = response.cookies();
+
+        xResp.entity = response.entity();
+
+
+
+        HttpStatus status = xResp.status;
+        HeaderMap headers = xResp.headers;
+        HttpEntity entity =xResp.entity;
 
         // Cache-Control for error responses? probably not needed.
 
         // error response won't be 1xx/204/304; must have an entity
         assert status.code>=200 && status.code!=204 && status.code!=304;
-        HttpEntity entity = response.entity();
-        if(entity==null)  // probably never null. over-caution
-            response.entity = entity = new HttpHelper.SimpleTextEntity(status.toString());
+        assert entity!=null;
 
 
         // no mod: gzip, conditional, range
@@ -50,7 +66,7 @@ class ImplRespMod
 
         ContentType contentType = entity.contentType();
         if(contentType!=null)  // probably never null. over-caution
-            headers.put(Content_Type, contentType.toString());  // contentType is sane
+            headers.xPut(Content_Type, contentType.toString());  // contentType is sane
         //legal to have no Content-Type. it's up to client to guess
 
         // no other entity headers from error responses
@@ -59,8 +75,6 @@ class ImplRespMod
         assert entity.lastModified()==null;
         assert entity.expires()==null;
 
-        // 0 or 1. could be even -1 if request parse error.
-        int req_httpMinorVersion= request==null? -1 : request.httpMinorVersion;
 
 
         int bodyType;  // [0] empty  [1] entity.getBody()  [2] chunk(entity.getBody())
@@ -71,7 +85,7 @@ class ImplRespMod
             bodyLength = -1;
             if(req_httpMinorVersion>=1)  // version could be 0 or even -1
             {
-                headers.put(Transfer_Encoding, "chunked");
+                headers.xPut(Transfer_Encoding, "chunked");
                 bodyType = 2;
             }
             else
@@ -85,7 +99,7 @@ class ImplRespMod
             bodyType = 1;
             bodyLength = L.longValue();
             assert bodyLength >= 0;
-            headers.put(Content_Length, Long.toString(bodyLength));
+            headers.xPut(Content_Length, Long.toString(bodyLength));
         }
 
         // note: request can be null, or incomplete, or bad in other ways.
@@ -100,14 +114,14 @@ class ImplRespMod
 
         // input is likely corrupt, conn cannot be reused. even if not, we should punish client.
         boolean isLast=true;
-        headers.put(Connection, "close");   // there was no Connection
+        headers.xPut(Connection, "close");   // there was no Connection
 
-        headers.put(Date, _HttpDate.getCurrStr());  // there was no Date
-        headers.put(Server, "bayou.io");
+        headers.xPut(Date, _HttpDate.getCurrStr());  // there was no Date
+        headers.xPut(Server, "bayou.io");
 
         // done
         ByteSource body = body(hConn.conf, entity, bodyType);
-        return new ImplConnResp(hConn, response, isLast, req_httpMinorVersion, body, bodyLength);
+        return xResp.init(hConn, isLast, body, bodyLength);
     }
 
     // resolve body. delayed till the last step to avoid error handling
@@ -143,7 +157,7 @@ class ImplRespMod
 
     // may throw from user code from user object `appResponse`. treat it as unexpected.
     static ImplConnResp modApp(ImplConn hConn, ImplHttpRequest request, HttpResponse appResponse,
-                               ArrayList<Cookie> jarCookies)
+                               List<Cookie> jarCookies)
     {
         // here we depend on original request headers, which we know app cannot temper with.
 
@@ -167,31 +181,35 @@ class ImplRespMod
         }
 
 
-        // make a copy of response; don't touch the original (e.g. it may be a shared stock response)
-        HttpResponseImpl resp = new HttpResponseImpl();
+        ImplConnResp resp = new ImplConnResp();
+
         resp.httpVersion = appResponse.httpVersion();
+        if(request.httpMinorVersion==0)
+            resp.httpVersion = "1.0";
+        // not sure how the 1.0 client reacts to a higher version response; send the same version instead.
+
         resp.status = statusL;
         resp.entity = entityL;
 
-        resp.cookies = jarCookies;
-        resp.cookies.addAll(appResponse.cookies());
+        resp.cookies = concatCookies(jarCookies, appResponse.cookies());
 
         // copy headers.
         resp.headers = new HeaderMap();
         HeaderMap headers = resp.headers;
-        for(Map.Entry<String,String> entry : appResponse.headers().entrySet())
-        {
-            String name = entry.getKey();
-            String value = entry.getValue();
-            // we don't trust name/value. check them.
-            _HttpUtil.checkHeader(name, value);
-            headers.put(name, value);
-        }
+        Map<String,String> appHeaders = appResponse.headers(); // often empty
+        if(!appHeaders.isEmpty())
+            for(Map.Entry<String,String> entry : appHeaders.entrySet())
+            {
+                String name = entry.getKey();
+                String value = entry.getValue();
+                // we don't trust name/value. check them.
+                _HttpUtil.checkHeader(name, value);
+                headers.put(name, value);
+            }
 
         HttpServerConf conf = hConn.conf;
-        boolean isGET  = request.method.equals("GET");
-        boolean isHEAD = request.method.equals("HEAD");
-        boolean GET_HEAD = isGET || isHEAD;
+        boolean isGET  = request.method.equals("GET"); // usually true
+        boolean isHEAD = !isGET && request.method.equals("HEAD");
         HeaderMap requestHeaders = request.headers;
 
 
@@ -199,21 +217,26 @@ class ImplRespMod
         // resp.entity may change later (gzip, null, ranged)
         // be careful of the local variables for status/entity
 
-        int acceptGzip = 0; // [0] no [1] TE: gzip [2] Accept-Encoding: gzip
-        if(+1==acceptEncoding(requestHeaders.get(TE), "gzip"))
-            acceptGzip = 1;
-        else if (+1==acceptEncoding(requestHeaders.get(Accept_Encoding), "gzip"))
-            acceptGzip = 2;
+        int acceptGzip = -1; // [-1] don't care [0] no [1] TE: gzip [2] Accept-Encoding: gzip
+        if(conf.autoGzip)
+        {
+            if(+1==acceptEncoding(requestHeaders.xGet(TE), "gzip"))
+                acceptGzip = 1;
+            else if (+1==acceptEncoding(requestHeaders.xGet(Accept_Encoding), "gzip"))
+                acceptGzip = 2;
+            else
+                acceptGzip = 0;
+        }
 
-        if(acceptGzip!=1 && conf.autoGzip)  // for any request method and response status (with an entity)
+        if(acceptGzip==2 || acceptGzip==0)  // for any request method and response status (with an entity)
             modGzip(acceptGzip, resp, conf); // may change entity to gzip-ed
         // compression is lazy. it's ok if later the gzip-ed entity is dropped
         // gzip-ed entity has unknown body length, so later range mod won't work.
 
-        if(conf.autoConditional && GET_HEAD && resp.status.code==200)
+        if(conf.autoConditional && (isGET||isHEAD) && resp.status.code==200)
             modConditional(resp, requestHeaders);  // may change 200 to 304 or 412. entity=null if 304.
 
-        if(conf.autoRange && GET_HEAD && resp.status.code==200)
+        if(conf.autoRange && (isGET||isHEAD) && resp.status.code==200)
             modRange(resp, requestHeaders);        // may change 200 to 206. entity ranged if 206
 
         // note: range is done after conditional. this is not clear from the messy language of the spec.
@@ -234,7 +257,7 @@ class ImplRespMod
         if(entityL!=null)
             _HttpUtil.copyEntityHeaders(entityL, headers);  // no Content-Length
 
-        if(conf.autoCacheControl && GET_HEAD)
+        if(conf.autoCacheControl && (isGET||isHEAD))
             modCacheControl(entityL, headers);
 
         // body
@@ -255,7 +278,7 @@ class ImplRespMod
         else
         {
             Long BL = entityL.contentLength();
-            if(acceptGzip==1 && conf.autoGzip && shouldGzip(entityL, conf))
+            if(acceptGzip==1 && shouldGzip(entityL, conf))
             {
                 bodyLength = -1;
                 hTransferEncoding = "gzip,chunked";
@@ -295,43 +318,45 @@ class ImplRespMod
         }
 
         if(hContentLength!=null)
-            headers.put(Content_Length, hContentLength);
-        else
-            headers.remove(Content_Length);  // in case app set it
+            headers.xPut(Content_Length, hContentLength);
+        else if(!appHeaders.isEmpty())
+            headers.xRemove(Content_Length);  // in case app set it
 
         if(hTransferEncoding!=null)
-            headers.put(Transfer_Encoding, hTransferEncoding);
-        else
-            headers.remove(Transfer_Encoding);   // in case app set it
+            headers.xPut(Transfer_Encoding, hTransferEncoding);
+        else if(!appHeaders.isEmpty())
+            headers.xRemove(Transfer_Encoding);   // in case app set it
 
 
 
         // Connection header. depends on body length
-        String respConnection = headers.get(Connection);
-        String reqConnection = requestHeaders.get(Connection);
+        String respConnection = appHeaders.isEmpty()? null : headers.xGet(Connection);
+        String reqConnection = requestHeaders.xGet(Connection);
 
         boolean isLast = isLastResponse(
-                request.httpMinorVersion, bodyLength, request.state100,
-                respConnection, reqConnection, statusCodeL);
+            request.httpMinorVersion, bodyLength, request.state100,
+            respConnection, reqConnection, statusCodeL);
 
         respConnection = _HttpUtil.modConnectionHeader(respConnection, isLast);
         // respConnection was checked; still valid after modConnectionHeader()
-        headers.put(Connection, respConnection);
+        headers.xPut(Connection, respConnection);
 
 
         // other headers
-        if(!headers.containsKey(Date))
-            headers.put(Date, _HttpDate.getCurrStr());
+        String prev;
 
-        if(!headers.containsKey(Server))
-            headers.put(Server, "bayou.io");
+        prev = headers.xPut(Date, _HttpDate.getCurrStr());
+        if(prev!=null) headers.xPut(Date, prev);
+
+        prev = headers.xPut(Server, "bayou.io");
+        if(prev!=null) headers.xPut(Server, prev);
 
 
         ByteSource body = body(conf, entityL, bodyType);
-        return new ImplConnResp(hConn, resp, isLast, request.httpMinorVersion, body, bodyLength); // no throw
+        return resp.init(hConn, isLast, body, bodyLength); // no throw
     }
 
-    static boolean isLastResponse(int req_httpMinorVersion, long bodyLength, int state100,
+    static boolean isLastResponse(byte req_httpMinorVersion, long bodyLength, byte state100,
                                   String respConnection, String reqConnection, int statusCode)
     {
         // app can instruct Connection:close in response headers
@@ -394,7 +419,7 @@ class ImplRespMod
 
         return true;
     }
-    static void modGzip(int acceptGzip, HttpResponseImpl resp, HttpServerConf conf)
+    static void modGzip(int acceptGzip, ImplConnResp resp, HttpServerConf conf)
     {
         // for any request method and response status.
 
@@ -487,7 +512,7 @@ class ImplRespMod
         {   return -1.0f;   }
     }
 
-    static void modConditional(HttpResponseImpl resp, HeaderMap requestHeaders)
+    static void modConditional(ImplConnResp resp, HeaderMap requestHeaders)
     {
         // only for GET/HEAD and status 200. other cases need to be handled by app
 
@@ -522,11 +547,11 @@ class ImplRespMod
 
         String hv;
 
-        hv = requestHeaders.get(If_Match);
+        hv = requestHeaders.xGet(If_Match);
         if(hv!=null && !matchEtag(hv, entity, true))
             return c412_Precondition_Failed;
 
-        hv = requestHeaders.get(If_Unmodified_Since);
+        hv = requestHeaders.xGet(If_Unmodified_Since);
         if(hv!=null && modifiedSince(hv, entity.lastModified()))
             return c412_Precondition_Failed;
 
@@ -540,7 +565,7 @@ class ImplRespMod
         // (we could return 412, but that's not useful to client)
 
         Boolean iIfNoneMatch = null;
-        hv = requestHeaders.get(If_None_Match);
+        hv = requestHeaders.xGet(If_None_Match);
         if(hv!=null) // weak comparison! - http://tools.ietf.org/html/rfc7232#section-3.2
             iIfNoneMatch = !matchEtag(hv, entity, false) ? Boolean.TRUE : Boolean.FALSE ;
 
@@ -548,7 +573,7 @@ class ImplRespMod
             return c200_OK;
 
         Boolean iIfModSince = null;
-        hv = requestHeaders.get(If_Modified_Since);
+        hv = requestHeaders.xGet(If_Modified_Since);
         if(hv!=null)
             iIfModSince = modifiedSince(hv, entity.lastModified()) ? Boolean.TRUE : Boolean.FALSE ;
 
@@ -671,7 +696,7 @@ class ImplRespMod
 
 
 
-    static void modRange(HttpResponseImpl resp, HeaderMap requestHeaders)
+    static void modRange(ImplConnResp resp, HeaderMap requestHeaders)
     {
         // only for GET/HEAD and status 200. other cases need to be handled by app
 
@@ -690,7 +715,7 @@ class ImplRespMod
         //     "none"  : app does not want to support range requests for the entity
         //     "bytes" : we assume app is going to handle range requests by itself, so we bail here
         //     ??????  : some custom range unit, which we don't understand. app will handle it.
-        if(resp.headers.containsKey(Accept_Ranges))
+        if(resp.headers.xContainsKey(Accept_Ranges))
             return;
         // Content-Range header shouldn't appear in a 200 response
 
@@ -707,16 +732,16 @@ class ImplRespMod
         // advertise [Accept-Ranges: bytes] for this entity.
         //     even if bodyLength is very small. that's a bit odd but ok.
         //     even in 206 responses. that's redundant but ok.
-        resp.headers.put(Accept_Ranges, "bytes");
+        resp.headers.xPut(Accept_Ranges, "bytes");
 
         modRange2(bodyLength.longValue(), requestHeaders, resp); // 200 => 200/206
     }
-    static void modRange2(long bodyLength, HeaderMap requestHeaders, HttpResponseImpl resp)
+    static void modRange2(long bodyLength, HeaderMap requestHeaders, ImplConnResp resp)
     {
         // being lazy, we won't produce 416. if there's any reason we can't produce 206, we'll leave it as 200.
         // this is ok since range is optional - a 200 response is always allowed regardless of range headers.
 
-        String hRange = requestHeaders.get(Range);
+        String hRange = requestHeaders.xGet(Range);
         if(hRange==null)   // most likely. not a range request.
             return;
 
@@ -754,7 +779,7 @@ class ImplRespMod
 
         HttpEntity entityL = resp.entity;
 
-        String hIfRange = requestHeaders.get(If_Range);
+        String hIfRange = requestHeaders.xGet(If_Range);
         if(hIfRange!=null)
         {
             int len = hIfRange.length();
@@ -785,7 +810,7 @@ class ImplRespMod
 
         resp.status = c206_Partial_Content;
 
-        resp.headers.put(Content_Range, "bytes " + rangeMin + '-' + rangeMax + '/' + bodyLength); //"bytes 500-999/1234"
+        resp.headers.xPut(Content_Range, "bytes " + rangeMin + '-' + rangeMax + '/' + bodyLength); //"bytes 500-999/1234"
 
         resp.entity = new RangedEntity(entityL, rangeMin, rangeMax+1); // note the convention change for max
     }
@@ -824,22 +849,35 @@ class ImplRespMod
         // GET/HEAD only. not sure about response status. maybe useful for non-200 responses too.
         // for unsafe requests, caches probably shouldn't cache the responses anyway.
         // if app knows better, it needs to handle Cache-Control by itself.
-        if(headers.containsKey(Cache_Control))
+        if(headers.xContainsKey(Cache_Control))
             return; // leave it as is.
 
         // always private to be safe; we can't know if a resource can be cached publicly.
         // if app knows better, app needs to set the proper Cache-Control before us.
 
         boolean hasExpires = (entity!=null && entity.expires()!=null)
-                || headers.containsKey(Expires);  // app may set Expires in general headers
+                || headers.xContainsKey(Expires);  // app may set Expires in general headers
 
         if(hasExpires)
-            headers.put(Cache_Control, "private");
+            headers.xPut(Cache_Control, "private");
         else // no Expires. "no-cache" to disable stupid "heuristic expiration" by caches
-            headers.put(Cache_Control, "private, no-cache");
+            headers.xPut(Cache_Control, "private, no-cache");
     }
 
     static final char DQUOTE  = '\"';
     static final char BACKSLASH  = '\\';
+
+    static List<Cookie> concatCookies(List<Cookie> jarCookies, List<Cookie> resCookies)
+    {
+        if(resCookies.isEmpty()) // usually, if app tends to use CookieJar
+            return jarCookies;
+        if(jarCookies.isEmpty())
+            return resCookies;
+
+        // both non-empty
+        assert jarCookies instanceof ArrayList; // it's a mutable list, internally generated by us
+        jarCookies.addAll(resCookies);
+        return jarCookies;
+    }
 
 }

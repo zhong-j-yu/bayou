@@ -356,7 +356,7 @@ class HttpClientInbound
         // we don't limit response body length here. a legit response can easily reach GBs.
 
         ImplHttpEntity entity;
-        if(null!=(hv=headers.get(Headers.Transfer_Encoding)))
+        if(null!=(hv=headers.xGet(Headers.Transfer_Encoding)))
         {
             if(!_StrUtil.equalIgnoreCase(hv, "chunked"))
                 throw new HttpResponseException("Unsupported Transfer-Encoding: "+hv, response);
@@ -365,11 +365,11 @@ class HttpClientInbound
 
             //we have a chunked entity body
             //if Content-Length is present along with Transfer-Encoding, Content-Length is ignored (must be removed)
-            headers.remove(Headers.Content_Length);
+            headers.xRemove(Headers.Content_Length);
 
             entity = new ImplHttpEntity(tcpConn, reqIsHead, true, null);
         }
-        else if(null!=(hv=headers.get(Headers.Content_Length)))
+        else if(null!=(hv=headers.xGet(Headers.Content_Length)))
         {
             long len;
             try
@@ -389,7 +389,7 @@ class HttpClientInbound
         }
 
         // entity metadata
-        if(null!=(hv=headers.get(Headers.Content_Type)))
+        if(null!=(hv=headers.xGet(Headers.Content_Type)))
         {
             try
             {
@@ -401,21 +401,21 @@ class HttpClientInbound
             }
         }
 
-        entity.contentEncoding = headers.get(Headers.Content_Encoding);
+        entity.contentEncoding = headers.xGet(Headers.Content_Encoding);
         // todo: validate?
         // todo: auto-decode gzip?
 
-        if(null!=(hv=headers.get(Headers.Last_Modified)))
+        if(null!=(hv=headers.xGet(Headers.Last_Modified)))
         {
             entity.lastModified = _HttpDate.parse(hv);
         }
 
-        if(null!=(hv=headers.get(Headers.Expires)))
+        if(null!=(hv=headers.xGet(Headers.Expires)))
         {
             entity.expires = _HttpDate.parse(hv);
         }
 
-        if(null!=(hv=headers.get(Headers.ETag)))
+        if(null!=(hv=headers.xGet(Headers.ETag)))
         {
             entity.etagIsWeak = hv.startsWith("W/");
             entity.etag = parseEtag(hv, entity.etagIsWeak?2:0, hv.length()); // null if fail

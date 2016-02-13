@@ -362,10 +362,10 @@ class ImplHttpEntity implements HttpEntity
 
                 try
                 {
-                    long w = hConn.tcpConn.write(); // throws.
+                    hConn.tcpConn.write(); // throws.
 
-                    if(w<resp100Bytes.length)
-                        throw new IOException("unable to flush: "+w+"/"+resp100Bytes.length);
+                    if(hConn.tcpConn.getWriteQueueSize()>0)
+                        throw new IOException("unable to flush: "+resp100Bytes.length);
                 }
                 catch (Exception e)
                 {

@@ -210,4 +210,25 @@ public class _Util
         return x;
     }
 
+    public static boolean booleanProp(boolean defaultValue, String propName)
+    {
+        String s = System.getProperty(propName);
+        if(s==null)
+            return defaultValue;
+        return "true".equalsIgnoreCase(s);
+    }
+
+
+    public static long bytes2long(byte[] bb, int p, int L)
+    {
+        long x = 0;
+        while(p<L)
+        {
+            x <<= 8;
+            x  |= bb[p] & 0xffL;
+            p++;
+        }
+        return x;
+    }
+
 }

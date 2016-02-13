@@ -700,14 +700,14 @@ class HttpClientOutbound
         }
 
         if(hContentLength!=null)
-            headers.put(Content_Length, hContentLength);
+            headers.xPut(Content_Length, hContentLength);
         else
-            headers.remove(Content_Length);  // in case app set it
+            headers.xRemove(Content_Length);  // in case app set it
 
         if(hTransferEncoding!=null)
-            headers.put(Transfer_Encoding, hTransferEncoding);
+            headers.xPut(Transfer_Encoding, hTransferEncoding);
         else
-            headers.remove(Transfer_Encoding);   // in case app set it
+            headers.xRemove(Transfer_Encoding);   // in case app set it
 
         ////////////////////////////////////////
 

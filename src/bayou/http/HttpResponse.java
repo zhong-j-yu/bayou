@@ -331,7 +331,7 @@ public interface HttpResponse
 
         HttpEntity entity = new TextHttpEntity(ContentType.text_plain_US_ASCII, uri); // all uri chars are ascii
         HttpResponseImpl response = new HttpResponseImpl(status, entity);
-        response.headers.put(Headers.Location, uri);
+        response.headers.xPut(Headers.Location, uri);
         return response;
     }
 

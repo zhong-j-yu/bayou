@@ -1,12 +1,14 @@
 package bayou.http;
 
 import _bayou._http._SimpleRequestEntity;
+import bayou.async.Async;
 import bayou.form.FormData;
 import bayou.form.FormParser;
 import bayou.mime.ContentType;
 import bayou.mime.Headers;
 
 import java.net.InetAddress;
+import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -425,6 +427,46 @@ public interface HttpRequest
     HttpEntity entity();
 
 
+    /**
+     * Get all the bytes of the entity body.
+     * <p>
+     *     See {@link HttpEntity#bodyBytes(int)}.
+     * </p>
+     * <p>
+     *     The request body will be closed when this action completes.
+     * </p>
+     * <p>
+     *     If {@link #entity() entity}==null, this action succeeds with a `null` ByteBuffer.
+     * </p>
+     */
+    default Async<ByteBuffer> bodyBytes(int maxBytes)
+    {
+        HttpEntity entity = entity();
+        if(entity==null)
+            return Async.success(null);
+        return entity.bodyBytes(maxBytes);
+    }
+
+    /**
+     * Get the entity body as a String.
+     * <p>
+     *     See {@link HttpEntity#bodyString(int)}.
+     * </p>
+     * <p>
+     *     The request body will be closed when this action completes.
+     * </p>
+     * <p>
+     *     If {@link #entity() entity}==null, this action succeeds with a `null` String.
+     * </p>
+     *
+     */
+    default Async<String> bodyString(int maxChars)
+    {
+        HttpEntity entity = entity();
+        if(entity==null)
+            return Async.success(null);
+        return entity.bodyString(maxChars);
+    }
 
 
 

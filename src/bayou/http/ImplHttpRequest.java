@@ -6,7 +6,6 @@ import bayou.mime.HeaderMap;
 import bayou.mime.Headers;
 
 import java.net.InetAddress;
-import java.net.UnknownHostException;
 import java.security.cert.X509Certificate;
 import java.util.Collections;
 import java.util.List;
@@ -119,7 +118,7 @@ class ImplHttpRequest implements HttpRequest
         Map<String,String> map = cookieMap;
         if(map==null)
         {
-            String hCookie = headers.get(Headers.Cookie);
+            String hCookie = headers.xGet(Headers.Cookie);
             map = Cookie.parseCookieHeader(hCookie); // no throw. ok if hCookie==null
             map = Collections.unmodifiableMap(map);  // immutable with final ref; publication is safe
             cookieMap = map;
@@ -134,7 +133,7 @@ class ImplHttpRequest implements HttpRequest
     }
 
 
-    int httpMinorVersion=-1;   // 0 or 1. -1 if parse error.
+    byte httpMinorVersion=-1;   // 0 or 1. -1 if parse error.
 
     @Override
     public String httpVersion()
@@ -156,7 +155,7 @@ class ImplHttpRequest implements HttpRequest
         // no need to check X-Forwarded-Proto in that case either, which is probably not trustworthy too.
         // however we don't raise error or make request as bad; just ignore X-Forwarded- headers.
 
-        String xff = headers.get("X-Forwarded-For");
+        String xff = headers.xGet(Headers.X_Forwarded_For);
         if(xff==null)
             return;
 
@@ -169,7 +168,7 @@ class ImplHttpRequest implements HttpRequest
         if(ipBytes==null) return;
         ip = _Ip.toInetAddress(ipBytes);
 
-        String xfp = headers.get("X-Forwarded-Proto");
+        String xfp = headers.xGet(Headers.X_Forwarded_Proto);
         if(xfp==null)
             return;
 
@@ -210,7 +209,7 @@ class ImplHttpRequest implements HttpRequest
     // 1: expected, not sent yet
     // 2: tried to send, but failed
     // 3: sent successfully.
-    int state100;
+    byte state100;
 
 
 }
